@@ -27,7 +27,7 @@
     - Raspberry Pi 5向けのプログラムだが，レジスタ操作プログラムはRaspberry Pi 5以外のターゲットにも使用可能 (動作確認は末)
     ```sh
     cd ~
-    git clone git@github.com:ColeStrickler/Pi5-CacheWayPartition.git
+    git clone https://github.com/ColeStrickler/Pi5-CacheWayPartition.git
     ```
 - レジスタ操作ツールにパッチを当てる
     - レジスタ値の読み込み時は無条件で取得値を表示するように変更
