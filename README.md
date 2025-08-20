@@ -9,16 +9,18 @@
 ## プログラム概要
 - pmu_counter
     - Linuxでパフォーマンスカウンタを使用するためのプログラム
-    - 6種類のイベントを持つグループを作成し，それらのカウンタの開始・停止・結果の出力を行う
-    - 計測を行うプログラムと一緒にコンパイルする事により使用
-    - 参考：https://learn.arm.com/learning-paths/servers-and-cloud-computing/arm_pmu/perf_event_open/
 
 - sim-lmbench
     - LMbenchの一部ベンチマークをシングルスレッド化するなど簡素化したもの
         - メモリアクセスのレイテンシ等を計測
     - キャッシュパーティショニングが機能しているかの確認にも使用可能
-        - [./sim-lmbench/lat_mem_rd/README.md](./sim-lmbench/lat_mem_rd/README.md/#キャッシュパーティショニングが有効かを確認)を参照
     - RD・WR負荷を生成するためにカスタムしたプログラムもあり
+
+## 手順書Index
+- sim-lmbenchをYocto Linux上で使用する方法
+    - [./sim-lmbench/README.md/#Yocto Linuxで使用する方法](./sim-lmbench/README.md/#yocto-linuxで使用する方法)
+- パーティショニングが有効かを確認
+    - [./sim-lmbench/lat_mem_rd/README.md/#キャッシュパーティショニングが有効かを確認](./sim-lmbench/lat_mem_rd/README.md/#キャッシュパーティショニングが有効かを確認)
 
 ## ARM DSUによるLLCのWAYパーティショニングのかけ方
 - 前提
