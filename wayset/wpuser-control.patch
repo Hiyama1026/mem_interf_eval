@@ -1,0 +1,13 @@
+--- wpuser-control.c	2025-08-20 18:40:33.991125974 +0900
++++ cust-wpuser-control.c	2025-08-20 18:51:44.826199899 +0900
+@@ -104,7 +104,9 @@ int main(int argc, char* argv[]) {
+         return -1;
+     }
+ 
+-    if (read_value_low)
++    if (reg == 6 || reg == 10 || reg == 11)
++        printf("Read value: 0x%x\n", read_value_low);
++    else if (read_value_low)
+         printf("Read value: 0x%x\n", read_value_low);
+     if (read_value_high)
+         printf("Read Value high: 0x%x\n", read_value_high);
