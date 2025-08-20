@@ -9,7 +9,6 @@
 
 // 計測対象のコアとプロセス(PID)を指定
 static int target_pid = 0;   // 計測対象とするタスクのPID (0の場合は全てのプロセスが計測対象)
-static int target_cpu = 3;   // 計測対象とするCPU (-1の場合は全コア上のプロセスが計測対象)
 
 // イベント管理情報
 struct perf_event_attr pe0, pe1, pe2, pe3, pe4, pe5;
@@ -33,7 +32,7 @@ static long perf_event_open(struct perf_event_attr *hw_event, pid_t pid, int cpu
  *   イベントグループを生成する
  *   生成時はカウンタを無効とする
  */
-void create_six_event_group(int event0, int event1, int event2, int event3, int event4, int event5) {
+void create_six_event_group(int target_cpu, int event0, int event1, int event2, int event3, int event4, int event5) {   // target_cpu: 計測対象とするCPU (-1の場合は全コア上のプロセスが計測対象)
     // event0
     memset(&pe0, 0, sizeof(struct perf_event_attr));
     pe0.type = PERF_TYPE_RAW;

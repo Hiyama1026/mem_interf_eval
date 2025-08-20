@@ -1,17 +1,14 @@
 # mem_interf_eval
+## 全体概要
 - メモリアクセスによるコア間の実行時間干渉を評価を目的としたプログラム
     - 共有キャッシュ上での干渉が主な対象
-
-## 動作確認済みターゲット
-- Raspberry Pi 5
-- Sulfur
 
 ## 各ディレクトリの説明
 - pmu_counter
     - Linuxでパフォーマンスカウンタを使用するためのプログラム
 
 - sim-lmbench
-    - LMbenchの一部ベンチマークをシングルスレッド化するなど簡素化したプログラム群
+    - LMbenchの一部ベンチマークをシングルスレッド化するなど簡素化した，メモリアクセスベンチマーク群
         - メモリアクセスのレイテンシ等を計測
         - RD・WR負荷を生成するためにカスタムしたプログラムもあり
     - キャッシュパーティショニングが機能しているかの確認にも使用可能
@@ -22,7 +19,7 @@
 ## 手順書Index
 - sim-lmbench内のプログラムをYocto Linux上で使用する方法
     - [./sim-lmbench/README.md/#Yocto Linuxで使用する方法](./sim-lmbench/README.md/#yocto-linuxで使用する方法)
-- パーティショニングが有効かを確認
+- パーティショニングが有効かを確認する手順
     - [./sim-lmbench/lat_mem_rd/README.md/#キャッシュパーティショニングが有効かを確認](./sim-lmbench/lat_mem_rd/README.md/#キャッシュパーティショニングが有効かを確認)
 
 ## ARM DSUによるLLCのWAYパーティショニングのかけ方
@@ -97,3 +94,7 @@
     $ sudo ./wpuser-control 6 0 0
     Read value: 0xc3
     ```
+
+## 動作確認済みターゲット
+- Raspberry Pi 5
+- Sulfur
