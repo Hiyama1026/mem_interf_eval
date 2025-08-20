@@ -1,17 +1,18 @@
-# sim-lmbench
-- LMbenchをシングルスレッド化するなど簡略化したプログラム
+# メモリアクセスベンチマーク群 sim-lmbench
+## 全体概要
+- LMbenchをシングルスレッド化するなど簡略化したベンチマーク群
 - メモリアクセスレイテンシの計測やRead・Write負荷の生成に使用する
+- 使用方法・使用用途などは各ディレクトリ内のREADMEを参照
 
-## プログラム概要
-- lat_mem_rd
-    - メモリRDレイテンシやメモリRD負荷を生成する
-    - strideアクセスでメモリを読み込む
+## 各ディレクトリの説明
+### lat_mem_rd
+- Readトラフィックの生成やReadレイテンシの計測などを行う
     - キャッシュパーティショニングが有効化されているかの確認にも使用可能
-        - 詳細はlat_mem_rdディレクトリ内のREADMEを参照
-- 使用方法・使用用途などはディレクトリ内のREADMEを参照
+- 詳細はlat_mem_rdディレクトリ内のREADMEを参照
 
-- bw_mem_wr
-    - Comming soon
+### bw_mem_wr
+- Writeトラフィックの生成やWrite帯域幅の計測などを行う
+- Commig soon
     
 ## Yocto Linuxで使用する方法
 - コンパイルやtasksetオプション等に必要なパッケージをイメージに組み込む
