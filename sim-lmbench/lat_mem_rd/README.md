@@ -22,6 +22,8 @@
     - その他
         - -oと-tは併用可能
         - バッファサイズとstride幅以外はオプションの入力順を問わない
+## Yocto Linuxで使用する方法
+- [mem_interf_eval/sim-lmbench/README.md](../README.md) を参照
 
 ## 使用例
 ### キャッシュパーティショニングが有効かを確認
