@@ -17,7 +17,7 @@
     - RD・WR負荷を生成するためにカスタムしたプログラムもあり
 
 ## 手順書Index
-- sim-lmbenchをYocto Linux上で使用する方法
+- sim-lmbench内のプログラムをYocto Linux上で使用する方法
     - [./sim-lmbench/README.md/#Yocto Linuxで使用する方法](./sim-lmbench/README.md/#yocto-linuxで使用する方法)
 - パーティショニングが有効かを確認
     - [./sim-lmbench/lat_mem_rd/README.md/#キャッシュパーティショニングが有効かを確認](./sim-lmbench/lat_mem_rd/README.md/#キャッシュパーティショニングが有効かを確認)
