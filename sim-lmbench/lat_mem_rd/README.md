@@ -33,9 +33,26 @@
 - 使用方法
     - ToDo
 
-### pmu-sim-lat_mem_rd.c (プログラムメンテナンス中)
+### pmu-sim-lat_mem_rd.c
 - 概要
-    - ToDo
+    - メモリRead中に生じるHW操作をPMUカウンタで観察する
+    - 干渉をかけた時とかけない時の結果を比較することで，干渉によりどのHW操作が増加したかを観測することが可能
+- コンパイル方法
+    - ``pmu-sim-lat_mem_rd.c``を本レポジトリ内にある``pmu_counter.c``と一緒に-O2でコンパイルする(gcc)
+        - ``$ gcc -O2 -o pmu-sim-lat_mem_rd pmu-sim-lat_mem_rd.c <PATH TO pmu_counter.c>``
+- 実行方法
+    - 方法1：``-t``オプションでベンチの実行コアを指定して実行する
+        - ``pmu_counter.c``の仕様に合わせて``create_six_event_group()``や``export_and_clean_counter()``の設定を行う
+        - ``$ sudo ./pmu-sim-lat_mem_rd <BUFFER SIZE> <STRIDE> -t <CPU NUM>`` で実行する
+            - -tオプションを使用する場合はPMUの計測対象のコアも指定したコアになる
+    - 方法2：``taskset``コマンドなど，外部コマンドによりベンチの実行コアを指定して実行する
+        - ``pmu_counter.c``の仕様に合わせて``create_six_event_group()``や``export_and_clean_counter()``の設定を行う
+        - ``taskset -c <CPU NUM> ./pmu-sim-lat_mem_rd <BUFFER SIZE> <STRIDE>`` などで実行する
+            - 実行するCPUは``pmu-sim-lat_mem_rd.c``内の``target_cpu``変数で指定されているCPUと一致している必要がある
+- その他
+    - 実行引数で指定したバッファサイズでstrideアクセスを行う
+        - アクセス回数は``pmu-sim-lat_mem_rd.c``の``num_iters``変数で定義されている
+    - ``pmu_counter.c``の仕様は[mem_interf_eval/pmu_counter/README.md](../../pmu_counter/README.md)を参照
 
 ## 注意事項など
 ### strideアクセスとは

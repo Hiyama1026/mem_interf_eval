@@ -1,9 +1,6 @@
 /*
- * メモリアクセス方法をLMbenchと同様にstrideずつアクセスするように変更したmemsys 
- * -O2でコンパイルすること ($ gcc -O2 -Wall -o memsys_lmb memsys_lmb.c -lm)
+ * -O2でコンパイルすること
  */
-
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -12,6 +9,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <unistd.h>
+#include <sys/stat.h>
 
 #define MAX_MEM_PARALLELISM 16
 
@@ -23,9 +21,11 @@ void stop_counter();
 void create_six_event_group();
 void export_and_clean_counter();
 // PMUカウンタの計測対象CPU
-static int target_cpu = 3;
+int target_cpu = 3;
 
-// アクセス回数(ToDo：LMbenchでだいたいどれくらいの値が入るか調べて揃える)
+bool use_taskset = false;
+
+// アクセス回数
 uint64_t num_iters = 1200 * 1000;
 // wsをstrideで割り切れるときに立てるフラグ
 bool just_size_flug = false;
@@ -65,12 +65,6 @@ struct mem_state {
 	size_t*	words;
 };
 
-uint64_t get_time_ns() {
-    struct timespec t;
-    clock_gettime(CLOCK_MONOTONIC, &t);
-    return 1000000000ULL * t.tv_sec + t.tv_nsec;
-}
-
 // 10周アクセスして，キャッシュに乗せる
 void warm_up(void *cookie, size_t list_len) {
     struct mem_state* state = (struct mem_state*)cookie;
@@ -81,7 +75,6 @@ void warm_up(void *cookie, size_t list_len) {
     }
 }
 
-/*---------------------------------------------------*/
 size_t*
 permutation(size_t max, size_t scale)
 {
@@ -121,7 +114,7 @@ permutation(size_t max, size_t scale)
 
 	return (result);
 }
-/*---------------------------------------------------*/
+
 void
 base_initialize(void* cookie)
 {
@@ -160,15 +153,12 @@ base_initialize(void* cookie)
 
 	if (state->addr == NULL || pages == NULL)
 		return;
-    //if (state->addr == NULL)
-	//	return;
 
-	if ((unsigned long)p % state->pagesize) {
+	if ((unsigned long)p % state->pagesize)
 		p += state->pagesize - (unsigned long)p % state->pagesize;
-	}
+
 	state->base = p;
 	state->initialized = 1;
-	//mem_reset();
 }
 
 void
@@ -197,8 +187,6 @@ stride_initialize(void* cookie)
         just_size_flug = true;
     else
     just_size_flug = false;
-
-	//mem_reset();
 }
 
 static volatile uint64_t	use_result_dummy;
@@ -206,41 +194,24 @@ static volatile uint64_t	use_result_dummy;
 void
 use_pointer(void *result) { use_result_dummy += (long)result; }
 
-double measure_stride_acesses(void *cookie) {
+void measure_stride_acesses(void *cookie) {
     struct mem_state* state = (struct mem_state*)cookie;
     register char **p = (char**)state->p[0];
     register uint64_t num_access;
 	register size_t i;
-	size_t list_len = (state->len / state->line) + 1;
-	//register size_t count = state->len / (state->line * 100) + 1;
-    uint64_t start_t, end_t;
-    double res;
-    
-    
-	if (just_size_flug)
-        list_len--;     // WSがstrideで割り切れるとき，list_lenは1長くなるためデクリメント
     
     #if 1   // 計測用
-    
-    warm_up(cookie, list_len);
-
     num_access = num_iters / 100;       // マクロ展開量で割る
     
-    start_t = get_time_ns();
     for (i = 0; i < num_access; ++i) {
-//        THOUSAND;
+        // THOUSAND;
         HUNDRED;
     }
     
     use_pointer((void *)p);
     state->p[0] = (char*)p;
-    
-    end_t = get_time_ns();
-    res = (double)(end_t - start_t) / (double)(num_access * 100);      // メモリアクセス1回分
-    
 
     #else   // アクセス場所を表示するのみ(debug)
-    
     ca_diff = 0;
     diff = 0;
     prev_p = (char*)p;
@@ -261,18 +232,14 @@ double measure_stride_acesses(void *cookie) {
         pre_caa_p = p;
         //HUNDRED;
     }
-    
     #endif
-
-    return res;
 }
 
 void
 loads(size_t max_work_size, size_t size, size_t stride)
 {
-	double result;
 	struct mem_state state;
-    (void)result;
+    size_t list_len;
 
 	if (size < stride) 
         return;
@@ -288,20 +255,26 @@ loads(size_t max_work_size, size_t size, size_t stride)
 	 */
     stride_initialize(&state);
 
-    reset_and_start_counter();
-    result = measure_stride_acesses(&state);    // 引数：バッファの先頭へのポインタ，バッファサイズ，周回数
-    stop_counter();
+    list_len = (state.len / state.line) + 1;
+
+    if (just_size_flug)
+        list_len--;     // WSがstrideで割り切れるとき，list_lenは1長くなるためデクリメント
+
+    // PMU計測前に予めデータをキャッシュに乗せたい場合はコメント解除
+    //warm_up(&state, list_len);
+
+    reset_and_start_counter();      // PMUカウンタ起動
+    measure_stride_acesses(&state);
+    stop_counter();                 // PMUカウンタ停止
     
     free(state.addr);
     free(state.pages);
 
 	/* We want to get to nanoseconds / load. */
-	//fprintf(stderr, "%.5f,%.3f\n", size / (1024. * 1024.), result);
     fflush(stdout);
     fflush(stderr);
 
 }
-/*---------------------------------------------------*/
 
 uint64_t parse_size(const char* str) {
     size_t len = strlen(str);
@@ -336,16 +309,118 @@ uint64_t parse_size(const char* str) {
     return number;
 }
 
+int create_directory(const char *path) {
+    struct stat st = {0};
+    int lg_mkdir;
+    
+    // ディレクトリが既に存在するかチェック
+    if (stat(path, &st) != 0) {
+        printf("Create %s\n", path);
+        lg_mkdir = mkdir(path, 0755);
+        if (lg_mkdir == -1) {
+            printf("ERR: Failed to create %s\n", path);
+            return -1;
+        }
+    }
+    return 0;
+}
+
 int main(int argc, char* argv[]) {
     size_t max_work_size;
     uint64_t stride;
 
-    if (argc != 3) {
+    char *endptr;
+    FILE *cg_fp;
+	char* cpu_to_set = NULL;
+	int cpuset_value = 0;
+    int pid_check_cnt = 0;
+    pid_t pid = getpid();
+
+    if (argc != 3 && argc != 5) {
         printf("arg[1]: Max buffer size\n");
         printf("  > Use 5GB if it is 0.\n");
         printf("arg[2]: Stride\n");
         printf("  > Use 2048KB if it is 0.\n");
+        printf("arg[3 or more]: Use OneShot (Optional)\n");
+        printf("  > Use \"-t <CPU NUM>\" when using cgroup-taskset(cpuset)\n");
         return 1;
+    }
+
+    if (argc == 5 && strcmp(argv[3], "-t") == 0) {
+        use_taskset = true;
+        target_cpu = strtoull(argv[4], &endptr, 10);
+        cpu_to_set = argv[4];
+    }
+    else {
+        printf("ERR: Unknown argument(%s).\n", argv[3]);
+    }
+
+    // cgroup taskset (cpuset)
+    if (use_taskset) {
+        // Enable cpuset module at master
+        cg_fp = fopen("/sys/fs/cgroup/cgroup.subtree_control", "w");
+        if (!cg_fp) {
+            printf("ERR: Could not open the croup_cpuset file. (%s)\n", "/sys/fs/cgroup/cgroup.subtree_control");
+            return 1;
+        }
+        fprintf(cg_fp, "%s", "+cpuset");
+        fclose(cg_fp);
+
+        // Create parent group
+        create_directory("/sys/fs/cgroup/Example");
+
+        // Enable cpuset module at parent group
+        cg_fp = fopen("/sys/fs/cgroup/Example/cgroup.subtree_control", "w");
+        if (!cg_fp) {
+            printf("ERR: Could not open the croup_cpuset file. (%s)\n", "/sys/fs/cgroup/cgroup.subtree_control");
+            return 1;
+        }
+        fprintf(cg_fp, "%s", "+cpuset");
+        fclose(cg_fp);
+
+        // Create sub group
+        create_directory("/sys/fs/cgroup/Example/pmu-sim-lat_mem_rd");
+
+        // Set CPU num 1 to cgroup config
+        cg_fp = fopen("/sys/fs/cgroup/Example/pmu-sim-lat_mem_rd/cpuset.cpus", "w");
+        if (!cg_fp) {
+            printf("ERR: Could not open the croup_cpuset file. (%s)\n", "/sys/fs/cgroup/Example/pmu-sim-lat_mem_rd/cpuset.cpus");
+            return 1;
+        }
+        fprintf(cg_fp, "%s", cpu_to_set);
+        fclose(cg_fp);
+
+        // Write PID to the  cpuset file
+        cg_fp = fopen("/sys/fs/cgroup/Example/pmu-sim-lat_mem_rd/cgroup.procs", "w");
+        if (!cg_fp) {
+            printf("ERR: Could not open the croup_cpuset file. (\"pmu-sim-lat_mem_rd\" group)\n");
+            return 1;
+        }
+        fprintf(cg_fp, "%d\n", pid);
+        fclose(cg_fp);
+
+        // Read an integer from the file
+        do {
+            cg_fp = fopen("/sys/fs/cgroup/Example/pmu-sim-lat_mem_rd/cgroup.procs", "r");
+            if (!cg_fp) {
+                printf("ERR: Could not open the croup_cpuset file. (\"pmu-sim-lat_mem_rd\" group)\n");
+                fclose(cg_fp);
+                return 1;
+            }
+
+            int fscan_res = fscanf(cg_fp, "%d", &cpuset_value);
+            (void)fscan_res;
+            fclose(cg_fp);
+            //printf("PID: %d, FILE: %d!!\n", pid, cpuset_value);
+            usleep(100*1000);   // sleep 0.1s
+            
+            // 2s check
+            if (pid_check_cnt == 20) {
+                printf("ERR: Could not set PID to the cpuset setting. (\"pmu-sim-lat_mem_rd\" group)\n");
+                return 1;
+            }
+            pid_check_cnt++;
+        } while (cpuset_value != pid);
     }
 
     // ワークサイズ・strideを設定 (ステップ実行時には設定内容を出力)
@@ -377,195 +452,195 @@ int main(int argc, char* argv[]) {
     fflush(stderr);
 
     /*--------------------------------------------------------------------------*/
-  // PMUカウンタグループの生成
-  create_six_event_group(target_cpu, 0x0, 0x1, 0x2, 0x3, 0x4, 0x5);
+    // PMUカウンタグループの生成
+    create_six_event_group(target_cpu, 0x0, 0x1, 0x2, 0x3, 0x4, 0x5);
 
-  // テスト実行
-  loads(max_work_size, max_work_size, stride);
+    // テスト実行
+    loads(max_work_size, max_work_size, stride);
 
-  // Read and print result
-  export_and_clean_counter("SW_INCR", "L1I_CACHE_REFILL", "L1I_TLB_REFILL", 
-                           "L1D_CACHE_REFILL", "L1D_CACHE", "L1D_TLB_REFILL");
-  /*--------------------------------------------------------------------------*/
-  // PMUカウンタグループの生成
-  create_six_event_group(target_cpu, 0x8, 0x9, 0xa, 0xb, 0x10, 0x11);
+    // Read and print result
+    export_and_clean_counter("SW_INCR", "L1I_CACHE_REFILL", "L1I_TLB_REFILL", 
+                            "L1D_CACHE_REFILL", "L1D_CACHE", "L1D_TLB_REFILL");
+    /*--------------------------------------------------------------------------*/
+    // PMUカウンタグループの生成
+    create_six_event_group(target_cpu, 0x8, 0x9, 0xa, 0xb, 0x10, 0x11);
 
-  // テスト実行
-  loads(max_work_size, max_work_size, stride);
+    // テスト実行
+    loads(max_work_size, max_work_size, stride);
 
-  // Read and print result
-  export_and_clean_counter("INST_RETIRED", "EXC_TAKEN", "EXC_RETURN", 
-                           "CID_WRITE_RETIRED", "BR_MIS_PRED", "CPU_CYCLES");
-  /*--------------------------------------------------------------------------*/
-  // PMUカウンタグループの生成
-  create_six_event_group(target_cpu, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17);
+    // Read and print result
+    export_and_clean_counter("INST_RETIRED", "EXC_TAKEN", "EXC_RETURN", 
+                            "CID_WRITE_RETIRED", "BR_MIS_PRED", "CPU_CYCLES");
+    /*--------------------------------------------------------------------------*/
+    // PMUカウンタグループの生成
+    create_six_event_group(target_cpu, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17);
 
-  // テスト実行
-  loads(max_work_size, max_work_size, stride);
+    // テスト実行
+    loads(max_work_size, max_work_size, stride);
 
-  // Read and print result
-  export_and_clean_counter("BR_PRED", "MEM_ACCESS", "L1I_CACHE", 
-                           "L1D_CACHE_WB", "L2D_CACHE", "L2D_CACHE_REFILL");
-  /*--------------------------------------------------------------------------*/
-  // PMUカウンタグループの生成
-  create_six_event_group(target_cpu, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d);
+    // Read and print result
+    export_and_clean_counter("BR_PRED", "MEM_ACCESS", "L1I_CACHE", 
+                            "L1D_CACHE_WB", "L2D_CACHE", "L2D_CACHE_REFILL");
+    /*--------------------------------------------------------------------------*/
+    // PMUカウンタグループの生成
+    create_six_event_group(target_cpu, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d);
 
-  // テスト実行
-  loads(max_work_size, max_work_size, stride);
+    // テスト実行
+    loads(max_work_size, max_work_size, stride);
 
-  // Read and print result
-  export_and_clean_counter("L2D_CACHE_WB", "BUS_ACCESS", "MEMORY_ERROR", 
-                           "INST_SPEC", "TTBR_WRITE_RETIRED", "BUS_CYCLES");
-  /*--------------------------------------------------------------------------*/
-  // PMUカウンタグループの生成
-  create_six_event_group(target_cpu, 0x20, 0x21, 0x22, 0x23, 0x24, 0x25);     // 0x1EのCHAINはperf_event_open()で「Error creating event」となるため飛ばす
+    // Read and print result
+    export_and_clean_counter("L2D_CACHE_WB", "BUS_ACCESS", "MEMORY_ERROR", 
+                            "INST_SPEC", "TTBR_WRITE_RETIRED", "BUS_CYCLES");
+    /*--------------------------------------------------------------------------*/
+    // PMUカウンタグループの生成
+    create_six_event_group(target_cpu, 0x20, 0x21, 0x22, 0x23, 0x24, 0x25);
 
-  // テスト実行
-  loads(max_work_size, max_work_size, stride);
+    // テスト実行
+    loads(max_work_size, max_work_size, stride);
 
-  // Read and print result
-  export_and_clean_counter("L2D_CACHE_ALLOCATE", "BR_RETIRED", "BR_MIS_PRED_RETIRED",
-                           "STALL_FRONTEND", "STALL_BACKEND", "L1D_TLB");
-  /*--------------------------------------------------------------------------*/
-  // PMUカウンタグループの生成
-  create_six_event_group(target_cpu, 0x26, 0x29, 0x2a, 0x2b, 0x2d, 0x2f);
+    // Read and print result
+    export_and_clean_counter("L2D_CACHE_ALLOCATE", "BR_RETIRED", "BR_MIS_PRED_RETIRED",
+                            "STALL_FRONTEND", "STALL_BACKEND", "L1D_TLB");
+    /*--------------------------------------------------------------------------*/
+    // PMUカウンタグループの生成
+    create_six_event_group(target_cpu, 0x26, 0x29, 0x2a, 0x2b, 0x2d, 0x2f);
 
-  // テスト実行
-  loads(max_work_size, max_work_size, stride);
+    // テスト実行
+    loads(max_work_size, max_work_size, stride);
 
-  // Read and print result
-  export_and_clean_counter("L1I_TLB", "L3D_CACHE_ALLOCATE", "L3D_CACHE_REFILL", 
-                           "L3D_CACHE_RD", "L2D_TLB_REFILL", "L2D_TLB");
-  /*--------------------------------------------------------------------------*/
-  // PMUカウンタグループの生成
-  create_six_event_group(target_cpu, 0x31, 0x34, 0x35, 0x36, 0x37, 0x40);
+    // Read and print result
+    export_and_clean_counter("L1I_TLB", "L3D_CACHE_ALLOCATE", "L3D_CACHE_REFILL", 
+                            "L3D_CACHE_RD", "L2D_TLB_REFILL", "L2D_TLB");
+    /*--------------------------------------------------------------------------*/
+    // PMUカウンタグループの生成
+    create_six_event_group(target_cpu, 0x31, 0x34, 0x35, 0x36, 0x37, 0x40);
 
-  // テスト実行
-  loads(max_work_size, max_work_size, stride);
+    // テスト実行
+    loads(max_work_size, max_work_size, stride);
 
-  // Read and print result
-  export_and_clean_counter("REMOTE_ACCESS", "DTLB_WALK", "ITLB_WALK", 
-                           "LL_CACHE_RD", "LL_CACHE_MISS_RD", "L1D_CACHE_RD");
-  /*--------------------------------------------------------------------------*/
-  // PMUカウンタグループの生成
-  create_six_event_group(target_cpu, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46);
+    // Read and print result
+    export_and_clean_counter("REMOTE_ACCESS", "DTLB_WALK", "ITLB_WALK", 
+                            "LL_CACHE_RD", "LL_CACHE_MISS_RD", "L1D_CACHE_RD");
+    /*--------------------------------------------------------------------------*/
+    // PMUカウンタグループの生成
+    create_six_event_group(target_cpu, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46);
 
-  // テスト実行
-  loads(max_work_size, max_work_size, stride);
+    // テスト実行
+    loads(max_work_size, max_work_size, stride);
 
-  // Read and print result
-  export_and_clean_counter("L1D_CACHE_WR", "L1D_CACHE_REFILL_RD", "L1D_CACHE_REFILL_WR", 
-                           "L1D_CACHE_REFILL_INNER", "L1D_CACHE_REFILL_OUTER", "L1D_CACHE_WB_VICTIM");
-  /*--------------------------------------------------------------------------*/
-  // PMUカウンタグループの生成
-  create_six_event_group(target_cpu, 0x47, 0x48, 0x4C, 0x4D, 0x4E, 0x4F);
+    // Read and print result
+    export_and_clean_counter("L1D_CACHE_WR", "L1D_CACHE_REFILL_RD", "L1D_CACHE_REFILL_WR", 
+                            "L1D_CACHE_REFILL_INNER", "L1D_CACHE_REFILL_OUTER", "L1D_CACHE_WB_VICTIM");
+    /*--------------------------------------------------------------------------*/
+    // PMUカウンタグループの生成
+    create_six_event_group(target_cpu, 0x47, 0x48, 0x4C, 0x4D, 0x4E, 0x4F);
 
-  // テスト実行
-  loads(max_work_size, max_work_size, stride);
+    // テスト実行
+    loads(max_work_size, max_work_size, stride);
 
-  // Read and print result
-  export_and_clean_counter("L1D_CACHE_WB_CLEAN", "L1D_CACHE_INVAL", "L1D_TLB_REFILL_RD", 
-                           "L1D_TLB_REFILL_WR", "L1D_TLB_RD", "L1D_TLB_WR");
-  /*--------------------------------------------------------------------------*/
-  // PMUカウンタグループの生成
-  create_six_event_group(target_cpu, 0x50, 0x51, 0x52, 0x53, 0x56, 0x57);
+    // Read and print result
+    export_and_clean_counter("L1D_CACHE_WB_CLEAN", "L1D_CACHE_INVAL", "L1D_TLB_REFILL_RD", 
+                            "L1D_TLB_REFILL_WR", "L1D_TLB_RD", "L1D_TLB_WR");
+    /*--------------------------------------------------------------------------*/
+    // PMUカウンタグループの生成
+    create_six_event_group(target_cpu, 0x50, 0x51, 0x52, 0x53, 0x56, 0x57);
 
-  // テスト実行
-  loads(max_work_size, max_work_size, stride);
+    // テスト実行
+    loads(max_work_size, max_work_size, stride);
 
-  // Read and print result
-  export_and_clean_counter("L2D_CACHE_RD", "L2D_CACHE_WR", "L2D_CACHE_REFILL_RD", 
-                           "L2D_CACHE_REFILL_WR", "L2D_CACHE_WB_VICTIM", "L2D_CACHE_WB_CLEAN");
-  /*--------------------------------------------------------------------------*/
-  // PMUカウンタグループの生成
-  create_six_event_group(target_cpu, 0x58, 0x5C, 0x5D, 0x5E, 0x5F, 0x60);
+    // Read and print result
+    export_and_clean_counter("L2D_CACHE_RD", "L2D_CACHE_WR", "L2D_CACHE_REFILL_RD", 
+                            "L2D_CACHE_REFILL_WR", "L2D_CACHE_WB_VICTIM", "L2D_CACHE_WB_CLEAN");
+    /*--------------------------------------------------------------------------*/
+    // PMUカウンタグループの生成
+    create_six_event_group(target_cpu, 0x58, 0x5C, 0x5D, 0x5E, 0x5F, 0x60);
 
-  // テスト実行
-  loads(max_work_size, max_work_size, stride);
+    // テスト実行
+    loads(max_work_size, max_work_size, stride);
 
-  // Read and print result
-  export_and_clean_counter("L2D_CACHE_INVAL", "L2D_TLB_REFILL_RD", "L2D_TLB_REFILL_WR", 
-                           "L2D_TLB_RD", "L2D_TLB_WR", "BUS_ACCESS_RD");
-  /*--------------------------------------------------------------------------*/
-  // PMUカウンタグループの生成
-  create_six_event_group(target_cpu, 0x61, 0x66, 0x67, 0x68, 0x69, 0x6C);
+    // Read and print result
+    export_and_clean_counter("L2D_CACHE_INVAL", "L2D_TLB_REFILL_RD", "L2D_TLB_REFILL_WR", 
+                            "L2D_TLB_RD", "L2D_TLB_WR", "BUS_ACCESS_RD");
+    /*--------------------------------------------------------------------------*/
+    // PMUカウンタグループの生成
+    create_six_event_group(target_cpu, 0x61, 0x66, 0x67, 0x68, 0x69, 0x6C);
 
-  // テスト実行
-  loads(max_work_size, max_work_size, stride);
+    // テスト実行
+    loads(max_work_size, max_work_size, stride);
 
-  // Read and print result
-  export_and_clean_counter("BUS_ACCESS_WR", "MEM_ACCESS_RD", "MEM_ACCESS_WR", 
-                           "UNALIGNED_LD_SPEC", "UNALIGNED_ST_SPEC", "LDREX_SPEC");
-  /*--------------------------------------------------------------------------*/
-  // PMUカウンタグループの生成
-  create_six_event_group(target_cpu, 0x6D, 0x6E, 0x6F, 0x70, 0x71, 0x73);
+    // Read and print result
+    export_and_clean_counter("BUS_ACCESS_WR", "MEM_ACCESS_RD", "MEM_ACCESS_WR", 
+                            "UNALIGNED_LD_SPEC", "UNALIGNED_ST_SPEC", "LDREX_SPEC");
+    /*--------------------------------------------------------------------------*/
+    // PMUカウンタグループの生成
+    create_six_event_group(target_cpu, 0x6D, 0x6E, 0x6F, 0x70, 0x71, 0x73);
 
-  // テスト実行
-  loads(max_work_size, max_work_size, stride);
+    // テスト実行
+    loads(max_work_size, max_work_size, stride);
 
-  // Read and print result
-  export_and_clean_counter("STREX_PASS_SPEC", "STREX_FAIL_SPEC", "STREX_SPEC", 
-                           "LD_SPEC", "ST_SPEC", "DP_SPEC");
-  /*--------------------------------------------------------------------------*/
-  // PMUカウンタグループの生成
-  create_six_event_group(target_cpu, 0x74, 0x75, 0x76, 0x77, 0x78, 0x79);
+    // Read and print result
+    export_and_clean_counter("STREX_PASS_SPEC", "STREX_FAIL_SPEC", "STREX_SPEC", 
+                            "LD_SPEC", "ST_SPEC", "DP_SPEC");
+    /*--------------------------------------------------------------------------*/
+    // PMUカウンタグループの生成
+    create_six_event_group(target_cpu, 0x74, 0x75, 0x76, 0x77, 0x78, 0x79);
 
-  // テスト実行
-  loads(max_work_size, max_work_size, stride);
+    // テスト実行
+    loads(max_work_size, max_work_size, stride);
 
-  // Read and print result
-  export_and_clean_counter("ASE_SPEC", "VFP_SPEC", "PC_WRITE_SPEC", 
-                           "CRYPTO_SPEC", "BR_IMMED_SPEC", "BR_RETURN_SPEC");
-  /*--------------------------------------------------------------------------*/
-  // PMUカウンタグループの生成
-  create_six_event_group(target_cpu, 0x7A, 0x7C, 0x7D, 0x7E, 0x81, 0x82);
+    // Read and print result
+    export_and_clean_counter("ASE_SPEC", "VFP_SPEC", "PC_WRITE_SPEC", 
+                            "CRYPTO_SPEC", "BR_IMMED_SPEC", "BR_RETURN_SPEC");
+    /*--------------------------------------------------------------------------*/
+    // PMUカウンタグループの生成
+    create_six_event_group(target_cpu, 0x7A, 0x7C, 0x7D, 0x7E, 0x81, 0x82);
 
-  // テスト実行
-  loads(max_work_size, max_work_size, stride);
+    // テスト実行
+    loads(max_work_size, max_work_size, stride);
 
-  // Read and print result
-  export_and_clean_counter("BR_INDIRECT_SPEC", "ISB_SPEC", "DSB_SPEC", 
-                           "DMB_SPEC", "EXC_UNDEF", "EXC_SVC");
-  /*--------------------------------------------------------------------------*/
-  // PMUカウンタグループの生成
-  create_six_event_group(target_cpu, 0x83, 0x84, 0x86, 0x87, 0x88, 0x8A);
+    // Read and print result
+    export_and_clean_counter("BR_INDIRECT_SPEC", "ISB_SPEC", "DSB_SPEC", 
+                            "DMB_SPEC", "EXC_UNDEF", "EXC_SVC");
+    /*--------------------------------------------------------------------------*/
+    // PMUカウンタグループの生成
+    create_six_event_group(target_cpu, 0x83, 0x84, 0x86, 0x87, 0x88, 0x8A);
 
-  // テスト実行
-  loads(max_work_size, max_work_size, stride);
+    // テスト実行
+    loads(max_work_size, max_work_size, stride);
 
-  // Read and print result
-  export_and_clean_counter("EXC_PABORT", "EXC_DABORT", "EXC_IRQ", 
-                           "EXC_FIQ", "EXC_SMC", "EXC_HVC");
-  /*--------------------------------------------------------------------------*/
-  // PMUカウンタグループの生成
-  create_six_event_group(target_cpu, 0x8B, 0x8C, 0x8D, 0x8E, 0x8F, 0x90);
+    // Read and print result
+    export_and_clean_counter("EXC_PABORT", "EXC_DABORT", "EXC_IRQ", 
+                            "EXC_FIQ", "EXC_SMC", "EXC_HVC");
+    /*--------------------------------------------------------------------------*/
+    // PMUカウンタグループの生成
+    create_six_event_group(target_cpu, 0x8B, 0x8C, 0x8D, 0x8E, 0x8F, 0x90);
 
-  // テスト実行
-  loads(max_work_size, max_work_size, stride);
+    // テスト実行
+    loads(max_work_size, max_work_size, stride);
 
-  // Read and print result
-  export_and_clean_counter("EXC_TRAP_PABORT", "EXC_TRAP_DABORT", "EXC_TRAP_OTHER", 
-                           "EXC_TRAP_IRQ", "EXC_TRAP_FIQ", "RC_LD_SPEC");
-  /*--------------------------------------------------------------------------*/
-  // PMUカウンタグループの生成
-  create_six_event_group(target_cpu, 0x91, 0xA0, 0x1, 0x2, 0x3, 0x4);
+    // Read and print result
+    export_and_clean_counter("EXC_TRAP_PABORT", "EXC_TRAP_DABORT", "EXC_TRAP_OTHER", 
+                            "EXC_TRAP_IRQ", "EXC_TRAP_FIQ", "RC_LD_SPEC");
+    /*--------------------------------------------------------------------------*/
+    // PMUカウンタグループの生成
+    create_six_event_group(target_cpu, 0x91, 0xA0, 0x1, 0x2, 0x3, 0x4);
 
-  // テスト実行
-  loads(max_work_size, max_work_size, stride);
+    // テスト実行
+    loads(max_work_size, max_work_size, stride);
 
-  // Read and print result
-  export_and_clean_counter("RC_ST_SPEC", "L3D_CACHE_RD", "--", 
-                           "--", "--", "--");
-  /*--------------------------------------------------------------------------*/
-  // PMUカウンタグループの生成
-  create_six_event_group(target_cpu, 0x500, 0x501, 0x502, 0x503, 0x504, 0x4);
+    // Read and print result
+    export_and_clean_counter("RC_ST_SPEC", "L3D_CACHE_RD", "--", 
+                            "--", "--", "--");
+    /*--------------------------------------------------------------------------*/
+    // PMUカウンタグループの生成
+    create_six_event_group(target_cpu, 0x500, 0x501, 0x502, 0x503, 0x504, 0x4);
 
-  // テスト実行
-  loads(max_work_size, max_work_size, stride);
+    // テスト実行
+    loads(max_work_size, max_work_size, stride);
 
-  // Read and print result
-  export_and_clean_counter("SCU_PFTCH_CPU_ACCESS", "SCU_PFTCH_CPU_MISS", "SCU_PFTCH_CPU_HIT", 
-                           "SCU_PFTCH_CPU_MATCH", "SCU_PFTCH_CPU_KILL", "--");
-  /*--------------------------------------------------------------------------*/
+    // Read and print result
+    export_and_clean_counter("SCU_PFTCH_CPU_ACCESS", "SCU_PFTCH_CPU_MISS", "SCU_PFTCH_CPU_HIT", 
+                            "SCU_PFTCH_CPU_MATCH", "SCU_PFTCH_CPU_KILL", "--");
+    /*--------------------------------------------------------------------------*/
     return 0;
 }

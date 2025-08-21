@@ -161,6 +161,33 @@ void stop_counter(void) {
     ioctl(fd5, PERF_EVENT_IOC_DISABLE, 0);
 }
 
+/* export_counter()
+ *   カウント値の読み取り，出力を行う
+ */
+void export_counter(char* cnt_name0, char* cnt_name1, char* cnt_name2, 
+                              char* cnt_name3, char* cnt_name4, char* cnt_name5) {
+    uint64_t val0 = 0;
+    uint64_t val1 = 0;
+    uint64_t val2 = 0;
+    uint64_t val3 = 0;
+    uint64_t val4 = 0;
+    uint64_t val5 = 0;
+
+    read(fd0, &val0, sizeof(val0));
+    read(fd1, &val1, sizeof(val1));
+    read(fd2, &val2, sizeof(val2));
+    read(fd3, &val3, sizeof(val3));
+    read(fd4, &val4, sizeof(val4));
+    read(fd5, &val5, sizeof(val5));
+
+    printf("%s, %"PRIu64"\n", cnt_name0, val0);
+    printf("%s, %"PRIu64"\n", cnt_name1, val1);
+    printf("%s, %"PRIu64"\n", cnt_name2, val2);
+    printf("%s, %"PRIu64"\n", cnt_name3, val3);
+    printf("%s, %"PRIu64"\n", cnt_name4, val4);
+    printf("%s, %"PRIu64"\n", cnt_name5, val5);
+}
+
 /* export_and_clean_counter()
  *   カウント値の読み取り，出力，ディスクリプタの削除を行う
  */
