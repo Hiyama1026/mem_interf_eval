@@ -5,13 +5,16 @@
 - 概要
     - メモリRDレイテンシを計測する
     - バッファ内をstrideアクセスして，メモリRead1回に要した時間を報告
-- 使用方法
+- コンパイル方法
     - -O2でコンパイルする (gcc)
         - ``$ gcc -O2 -o sim-lat_mem_rd sim-lat_mem_rd.c ``
-    - 実行引数に最大バッファサイズとstride幅を入力する
+- 使用方法
+    - 第一引数に最大バッファサイズ，第二引数にstride幅を入力 (順番は固定)
         - ``$ ./sim-lat_mem_rd 5M 2K``
+        - 実行するとバッファサイズが最大バッファサイズまでステップ的に増加していく
+        - バッファ内を指定した幅でstrideアクセスする
     - OneShotモード
-        - バッファサイズとstride幅よりも``-o``を付けると指定したバッファサイズのみを計測
+        - バッファサイズとstride幅よりも後ろに``-o``を付けると指定したバッファサイズのみを計測
             ```sh
             $ ./sim-lat_mem_rd 5M 2K -o
             5.00000,24.021
@@ -19,19 +22,44 @@
     - tasksetオプション
         - cgroupのcpusetを使用して自タスクの実行コアを固定するオプション
             - Yocto Linuxなど，tasksetコマンドが使用できない環境下での使用を想定
-        - バッファサイズとstride幅よりも``-t``を付けることによりコア固定
+        - バッファサイズとstride幅よりも後ろに``-t``を付けることによりコア固定
             - ``$ sudo ./sim-lat_mem_rd 5M 2K -t 2``
     - その他
         - -oと-tは併用可能
         - バッファサイズとstride幅以外はオプションの入力順を問わない
 
-### inf-sim-lat_mem_rd.c (プログラムメンテナンス中)
+### inf-sim-lat_mem_rd.c
 - 概要
     - メモリRDトラフィックを生成する
         - 干渉評価時における，負荷をかける側として使用することを想定
     - strideアクセスで無限にメモリRDを行う
+- コンパイル方法
+    - -O2でコンパイルする (gcc)
+        - ``$ gcc -O2 -o inf-sim-bw_mem_wr inf-sim-bw_mem_wr.c``
 - 使用方法
-    - ToDo
+    - 第一引数にバッファサイズ，第二引数にstride幅を入力 (順番は固定)
+        - ``$ ./inf-sim-lat_mem_rd 2M 64``
+    - 第三引数以降で以下のオプションを使用可能 (順番は任意)
+        - ``-t <CPU ID>``：cgroupを使用したtaskset機能
+            - cgroupを使用するため環境によってはsudo実行が必要
+        - ``-r <INTERVAL>``：実行時のメモリRDレイテンシを表示
+            - ファイル出力しない場合はターミナルに出力
+            - INTERVALは報告を行う間隔 (大きいほど間隔が長い)
+        - ``-f <FILE NAME>``：メモリRDレイテンシをファイルに出力
+            - FILE NAMEに結果を格納するファイル名を入れる
+            - ``-r``でレポート間隔を指定した上で使用
+            - ベンチ実行中は配列に結果を格納し，プログラム終了時にファイル出力を行う
+                - バッファ(配列)フルでもプログラムを終了し，ファイルに結果を出力する
+        - ``-e <NUM OF ELEMENTS>``：バッファに格納可能なログの数を指定
+            - NUM OF ELEGANSに保存可能なログの上限数を入力
+            - ``-e``を使用しない場合はデフォルト値が使用される (プログラム内の``buf_log_size``変数で定義)
+    - 実行コマンド例
+        - ``$ ./inf-sim-lat_mem_rd 2M 64 -r 500000000 -f test.csv``
+- その他
+    - ファイル出力を行う場合，バッファフルでプログラムが終了した場合はログファイルの先頭に警告が表示される
+        - ``WARN: BUFFER FULL.``
+    - プログラムの終了方法はtaskkillと強制終了(Ctrl+C)に対応している
+    - stride幅はキャッシュラインサイズと一致させることで効率よくキャッシュを汚すことができる
 
 ### pmu-sim-lat_mem_rd.c
 - 概要
@@ -45,10 +73,11 @@
         - ``pmu_counter.c``の仕様に合わせて``create_six_event_group()``や``export_and_clean_counter()``の設定を行う
         - ``$ sudo ./pmu-sim-lat_mem_rd <BUFFER SIZE> <STRIDE> -t <CPU NUM>`` で実行する
             - -tオプションを使用する場合はPMUの計測対象のコアも指定したコアになる
+            - cgroupのcpusetを使用してコア固定を行うため，sudo実行が必要な場合がある
     - 方法2：``taskset``コマンドなど，外部コマンドによりベンチの実行コアを指定して実行する
         - ``pmu_counter.c``の仕様に合わせて``create_six_event_group()``や``export_and_clean_counter()``の設定を行う
         - ``taskset -c <CPU NUM> ./pmu-sim-lat_mem_rd <BUFFER SIZE> <STRIDE>`` などで実行する
-            - 実行するCPUは``pmu-sim-lat_mem_rd.c``内の``target_cpu``変数で指定されているCPUと一致している必要がある
+            - 実行するCPUは``pmu-sim-lat_mem_rd.c``内の``target_cpu``変数で**指定されているCPUと一致**している必要がある
 - その他
     - 実行引数で指定したバッファサイズでstrideアクセスを行う
         - アクセス回数は``pmu-sim-lat_mem_rd.c``の``num_iters``変数で定義されている
@@ -66,8 +95,6 @@
         - 例)下図「LLCのWAY数毎のメモリRDレイテンシ」の``way×4 (no-partition)``曲線
         - 16KB間隔でアクセスするため，バッファ内の一部しかアクセスしていない
         - しかし，stride幅が2のべき乗であるため，バッファサイズが2MB(LLCサイズ)を超すタイミングでコンフリクトミスが発生し，レイテンシが上昇し始める (LLCをミスし始める)
-### inf-sim-lat_mem_rdのstride幅
-- 負荷をかける際のstride幅はキャッシュラインサイズと一致させることで効率よくキャッシュを汚すことができる
 ### stride幅とプリフェッチ
 - stride幅を増加させるとプリフェッチが効かなくなることを確認済み
 

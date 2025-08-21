@@ -1,9 +1,6 @@
 /*
- * メモリアクセス方法をLMbenchと同様にstrideずつアクセスするように変更したmemsys 
  * -O2でコンパイルすること ($ gcc -O2 -Wall -o memsys_lmb memsys_lmb.c -lm)
  */
-
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -19,7 +16,7 @@
 #define MAX_MEM_PARALLELISM 16
 #define NUM_SAMPLE 100
 
-// アクセス回数(ToDo：LMbenchでだいたいどれくらいの値が入るか調べて揃える)
+// アクセス回数
 uint64_t num_iters = 1200 * 1000;
 // wsをstrideで割り切れるときに立てるフラグ
 bool just_size_flug = false;
@@ -107,7 +104,6 @@ void warm_up(void *cookie, size_t list_len) {
     }
 }
 
-/*---------------------------------------------------*/
 size_t*
 permutation(size_t max, size_t scale)
 {
@@ -147,7 +143,7 @@ permutation(size_t max, size_t scale)
 
 	return (result);
 }
-/*---------------------------------------------------*/
+
 void
 base_initialize(void* cookie)
 {
@@ -186,15 +182,12 @@ base_initialize(void* cookie)
 
 	if (state->addr == NULL || pages == NULL)
 		return;
-    //if (state->addr == NULL)
-	//	return;
 
 	if ((unsigned long)p % state->pagesize) {
 		p += state->pagesize - (unsigned long)p % state->pagesize;
 	}
 	state->base = p;
 	state->initialized = 1;
-	//mem_reset();
 }
 
 void
@@ -223,8 +216,6 @@ stride_initialize(void* cookie)
         just_size_flug = true;
     else
     just_size_flug = false;
-
-	//mem_reset();
 }
 
 static volatile uint64_t	use_result_dummy;
@@ -232,13 +223,12 @@ static volatile uint64_t	use_result_dummy;
 void
 use_pointer(void *result) { use_result_dummy += (long)result; }
 
-double measure_random_acesses(void *cookie) {
+double measure_stride_acesses(void *cookie) {
     struct mem_state* state = (struct mem_state*)cookie;
     register char **p = (char**)state->p[0];
     register uint64_t num_access;
 	register size_t i;
 	size_t list_len = (state->len / state->line) + 1;
-	//register size_t count = state->len / (state->line * 100) + 1;
     uint64_t start_t, end_t;
     double res;
     
@@ -254,7 +244,7 @@ double measure_random_acesses(void *cookie) {
     
     start_t = get_time_ns();
     for (i = 0; i < num_access; ++i) {
-//        THOUSAND;
+        // THOUSAND;
         HUNDRED;
     }
     
@@ -264,9 +254,7 @@ double measure_random_acesses(void *cookie) {
     end_t = get_time_ns();
     res = (double)(end_t - start_t) / (double)(num_access * 100);      // メモリアクセス1回分
     
-
     #else   // アクセス場所を表示するのみ(debug)
-    
     ca_diff = 0;
     diff = 0;
     prev_p = (char*)p;
@@ -287,7 +275,6 @@ double measure_random_acesses(void *cookie) {
         pre_caa_p = p;
         //HUNDRED;
     }
-    
     #endif
 
     return res;
@@ -322,10 +309,9 @@ loads(size_t max_work_size, size_t size, size_t stride)
 	 * Now walk them and time it.
 	 */
     stride_initialize(&state);
-    //result = measure_random_acesses(&state);
 
     for (int j = 0; j < NUM_SAMPLE; j++) {
-        times[j] = measure_random_acesses(&state);    // 引数：バッファの先頭へのポインタ，バッファサイズ，周回数
+        times[j] = measure_stride_acesses(&state);
     }
     result = find_median(times, NUM_SAMPLE);
     
@@ -339,7 +325,6 @@ loads(size_t max_work_size, size_t size, size_t stride)
     fflush(stderr);
 
 }
-/*---------------------------------------------------*/
 
 uint64_t parse_size(const char* str) {
     size_t len = strlen(str);
@@ -400,7 +385,6 @@ int main(int argc, char* argv[]) {
     int pid_check_cnt = 0;
     pid_t pid = getpid();
     FILE *cg_fp;
-    //struct mem_state state;
 
     if (argc != 3 && argc != 4 && argc != 5 && argc != 6) {
         printf("arg[1]: Max buffer size\n");

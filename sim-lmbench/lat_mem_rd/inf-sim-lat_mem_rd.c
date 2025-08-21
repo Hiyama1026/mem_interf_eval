@@ -1,9 +1,6 @@
 /*
- * メモリアクセス方法をLMbenchと同様にstrideずつアクセスするように変更したmemsys 
- * -O2でコンパイルすること ($ gcc -O2 -Wall -o memsys_lmb memsys_lmb.c -lm)
+ * -O2でコンパイルすること
  */
-
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -12,31 +9,30 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <unistd.h>
-#include <errno.h>
 #include <sys/stat.h>
+#include <signal.h>
 
 #define MAX_MEM_PARALLELISM 16
 #define NUM_SAMPLE 100
 
+// アクセス回数
+uint64_t num_iters = 200000 * 1000;
+
 char *ERR_INVALID_ARGS = "arg[1]: Max buffer size\n  > Use 5GB if it is 0.\narg[2]: Stride\n  > Use 2048KB if it is 0.\narg[3 or more]: Reference below.\n  > Use \"-r <REPORT INTERVAL>\" when using report-function.\n  > Use \"-t <CPU NUM>\" when using cgroup-taskset(cpuset).\n  > Use \"-f <FILE NAME>\" when using file export.\n  > Use \"-e <NUM OF ELEMENTS>\" to set the number of logs can be saved.\n";
 
-// アクセス回数
-uint64_t num_iters = 2000000 * 100;
-uint64_t report_cnt = 2000000;
+bool use_taskset = false;
 bool use_report = false;
+bool use_file_export = false;
+bool use_buffsize_set = false;
+bool buf_full_flag = false;
 
-// wsをstrideで割り切れるときに立てるフラグ
-bool just_size_flug = false;
-// 計測時間保存用配列
-//double times[NUM_SAMPLE];
-double total_time = 0;
+double  *buf_log;
+uint32_t buf_log_size = 1024*1024*3;
+FILE *log_fp;
+char log_file_path[256];
+uint32_t result_idx = 0;
 
-// 差分計算用
-#include <stddef.h>
-ptrdiff_t diff;
-ptrdiff_t ca_diff;
-char* prev_p;
-char** pre_caa_p;
+void signal_handler(int signum);
 
 #define	ONE	p = (char **)*p;
 #define	FIVE	ONE ONE ONE ONE ONE
@@ -70,31 +66,6 @@ uint64_t get_time_ns() {
     return 1000000000ULL * t.tv_sec + t.tv_nsec;
 }
 
-// 比較関数（qsort用）
-int compare(const void* a, const void* b) {
-    double diff = *(double*)a - *(double*)b;
-    return (diff > 0) - (diff < 0); // 正負を返す
-}
-
-// 中央値を求める
-double find_median(double* arr, size_t size) {
-    if (size == 0) {
-        fprintf(stderr, "Array size must be greater than 0.\n");
-        exit(EXIT_FAILURE);
-    }
-
-    // 配列をソート
-    qsort(arr, size, sizeof(double), (int (*)(const void*, const void*))compare);
-
-    // 中央値を計算
-    if (size % 2 == 0) {
-        return (arr[size / 2 - 1] + arr[size / 2]) / 2.0;
-    } else {
-        return arr[size / 2];
-    }
-}
-
-/*---------------------------------------------------*/
 size_t*
 permutation(size_t max, size_t scale)
 {
@@ -134,7 +105,7 @@ permutation(size_t max, size_t scale)
 
 	return (result);
 }
-/*---------------------------------------------------*/
+
 void
 base_initialize(void* cookie)
 {
@@ -173,15 +144,12 @@ base_initialize(void* cookie)
 
 	if (state->addr == NULL || pages == NULL)
 		return;
-    //if (state->addr == NULL)
-	//	return;
 
 	if ((unsigned long)p % state->pagesize) {
 		p += state->pagesize - (unsigned long)p % state->pagesize;
 	}
 	state->base = p;
 	state->initialized = 1;
-	//mem_reset();
 }
 
 void
@@ -205,11 +173,6 @@ stride_initialize(void* cookie)
 	}
 	*(char **)&addr[i - stride] = (char*)&addr[0]; 
 	state->p[0] = addr;
-
-    if (!(range % stride))
-        just_size_flug = true;
-    else
-    just_size_flug = false;
 }
 
 static volatile uint64_t	use_result_dummy;
@@ -221,43 +184,42 @@ void measure_stride_acesses(void *cookie) {
     struct mem_state* state = (struct mem_state*)cookie;
     register char **p = (char**)state->p[0];
     register uint64_t num_access;
-	register size_t i, j;
-	size_t list_len = (state->len / state->line) + 1;
+	register size_t i;
     uint64_t start_t, end_t;
-    uint64_t outer_cnt = 0;
-    double res;
-    
-    
-	if (just_size_flug)
-        list_len--;     // WSがstrideで割り切れるとき，list_lenは1長くなるためデクリメント
+    double res = 0;
 
-    num_access = (uint64_t)(num_iters / 100);       // マクロ展開量で割る
-    outer_cnt = (uint64_t)(num_access / report_cnt);
-
-    while(1) {
-        for (i = 0; i < outer_cnt; i++){
-            start_t = get_time_ns();
-            for (j = 0; j < report_cnt; j++) {
-                HUNDRED;
-            }
-            end_t = get_time_ns();
-            res = (double)(end_t - start_t);
-            if (use_report) {
-                fprintf(stderr, "%.3f\n", res / (report_cnt * 100));    // 1Byteアクセス時間 (ToDo確認)
-            }
-        }
-        use_pointer((void *)p);
-        state->p[0] = (char*)p;
+    num_access = num_iters / 100;       // マクロ展開量で割る
+    
+    start_t = get_time_ns();
+    for (i = 0; i < num_access; ++i) {
+        HUNDRED;
     }
+    end_t = get_time_ns();
     
+    use_pointer((void *)p);
+    state->p[0] = (char*)p;
+
+    if (use_report || use_file_export) {
+        res = (double)(end_t - start_t) / (double)(num_access * 100);      // メモリアクセス1回分
+    }
+    if (use_report && !use_file_export) {
+        fprintf(stderr, "%.5f\n", res);
+        fflush(stderr);
+    }
+    if (use_file_export) {
+        buf_log[result_idx] = res;
+        result_idx++;
+        if (result_idx >= buf_log_size) {
+            buf_full_flag = true;
+            signal_handler(15);
+        }
+    }
 }
 
 void
 loads(size_t max_work_size, size_t size, size_t stride)
 {
-	double result;
 	struct mem_state state;
-    (void)result;       // 使用しなくても警告を出さない
 
 	if (size < stride) 
         return;
@@ -273,19 +235,18 @@ loads(size_t max_work_size, size_t size, size_t stride)
 	 */
     stride_initialize(&state);
 
-    measure_stride_acesses(&state);
-    
+    while(1) {
+        measure_stride_acesses(&state);
+    }
     //free(state.addr);
     //free(state.pages);
 }
-/*---------------------------------------------------*/
 
 uint64_t parse_size(const char* str) {
     size_t len = strlen(str);
     
     if (len == 0) {
-        fprintf(stderr, "Empty string\n\n");
-        printf("%s", ERR_INVALID_ARGS);
+        fprintf(stderr, "Empty string\n");
         exit(EXIT_FAILURE);
     }
 
@@ -301,8 +262,7 @@ uint64_t parse_size(const char* str) {
     } else if (unit >= '0' && unit <= '9') {
         return strtoull(str, NULL, 10);
     } else {
-        fprintf(stderr, "ERR: Invalid unit\n\n");
-        printf("%s", ERR_INVALID_ARGS);
+        fprintf(stderr, "Invalid unit\n");
         exit(EXIT_FAILURE);
     }
 
@@ -331,32 +291,102 @@ int create_directory(const char *path) {
     return 0;
 }
 
+void signal_handler(int signum) {
+    int report_idx = 0;
+
+    //printf("signal_handler (%d)\n", signum);
+    if (use_file_export) {
+        log_fp = fopen(log_file_path, "w");
+        if (!log_fp) {
+            printf("ERR: Could not open the log file. (%s)\n", log_file_path);
+            exit(1);
+        }
+        if (buf_full_flag) {
+            fprintf(log_fp, "WARN: BUFFER FULL.\n\n");
+        }
+        fprintf(log_fp, "WriteLatency[ns]\n");
+        while(report_idx < result_idx){
+            fprintf(log_fp, "%.5f\n", buf_log[report_idx]);
+            report_idx++;
+        }
+        fclose(log_fp);
+        exit(0);
+    }
+    exit(0);
+}
+
 int main(int argc, char* argv[]) {
     size_t max_work_size;
     uint64_t stride;
-    //struct mem_state state;
-    bool use_taskset = false;
-    char* cpu_to_set;
-    int cpuset_value = 0;
+
+    char *endptr;
+	FILE *cg_fp;
+    char *file_name;
+	char* cpu_to_set = NULL;
+	int cpuset_value = 0;
     int pid_check_cnt = 0;
     pid_t pid = getpid();
-    char *endptr;
-    FILE *cg_fp;
+    char is_remove[16];
+    bool is_check_fdel = false;
 
     if (argc < 3) {
+		printf("%s", ERR_INVALID_ARGS);
+        return 1;
+    }
+    
+    max_work_size = (size_t)parse_size(argv[1]);
+    stride = parse_size(argv[2]);
+
+    argc -= 3;
+    if ((argc % 2) != 0) {
+        printf("ERR: Argument num error.\n\n");
         printf("%s", ERR_INVALID_ARGS);
         return 1;
     }
+    for (int awc = 0; awc < (argc/2); awc++) {        
+        switch (argv[(awc*2)+3][1]) {
+            case 'r':
+                use_report = true;
+                num_iters = strtoull(argv[((awc*2)+3)+1], &endptr, 10);
+                break;
+            case 't':
+                use_taskset = true;
+                cpu_to_set = argv[((awc*2)+3)+1];
+                break;
+            case 'f':
+                use_file_export = true;
+                file_name = argv[((awc*2)+3)+1];
+                sprintf(log_file_path, "%s%s", "./results/", file_name);
+                break;
+            case 'e':
+                    buf_log_size = strtoull(argv[((awc*2)+3)+1], &endptr, 10);
+                    use_buffsize_set = true;
+                break;
+            default:
+                printf("ERR: Unknown argument. (%s)\n\n", argv[(awc*2)+3]);
+                printf("%s", ERR_INVALID_ARGS);
+                return 1;
+        }
+    }
 
-    max_work_size = (size_t)parse_size(argv[1]);
-    stride = parse_size(argv[2]);
+    if (!use_report && use_file_export) {
+        printf("ERR: You must specify the report interval using -r option when using -f option.\n\n");
+        printf("%s", ERR_INVALID_ARGS);
+        exit(1);
+    }
+
+    if (!use_file_export && use_buffsize_set) {
+        printf("ERR: Use -f with -f.\n\n");
+        printf("%s", ERR_INVALID_ARGS);
+        exit(1);
+    }
 
     if (max_work_size == 0) {
         max_work_size = 5 * 1024 * 1024;    // デフォルト5MB
         printf("max_ws (default), %lu\n", max_work_size);
     }
     else if (max_work_size < 5 * 1024) {
-        printf("ERR: Maximum work size (%lu Byte) is too small (5K or more).\n", max_work_size);
+        printf("err: Maximum work size (%lu Byte) is too small (5K or more).\n", max_work_size);
         return 1;
     }
     else {
@@ -368,38 +398,21 @@ int main(int argc, char* argv[]) {
         printf("stride (default), %lu\n\n", stride);
     }
     else if (stride < sizeof(char *)) {
-        printf("ERR: Stride (%lu Byte) is too small (%lu Byte or more).\n", stride, sizeof(char *));
+        printf("err: Stride (%lu Byte) is too small (%lu Byte or more).\n", stride, sizeof(char *));
         return 1;
     }
     else {
         // OK
     }
 
-    argc -= 3;
-    if ((argc % 2) != 0) {
-        printf("ERR: Argument num error.\n\n");
-        printf("%s", ERR_INVALID_ARGS);
-        return 1;
+    if (use_file_export) {
+        buf_log = (double *)valloc(sizeof(double) * buf_log_size);
+        if (!buf_log) {
+            perror("malloc");
+            exit(1);
+        }
     }
-    for (int awc = 0; awc < (argc/2); awc++) {
-        
-        switch (argv[(awc*2)+3][1]) {
-            case 'r':
-                use_report = true;
-                report_cnt = strtoull(argv[((awc*2)+3)+1], &endptr, 10);
-                break;
-            case 't':
-                use_taskset = true;
-                cpu_to_set = argv[((awc*2)+3)+1];
-                break;
-            default:
-                printf("ERR: Unknown argument. (%s)\n\n", argv[(awc*2)+3]);
-                printf("%s", ERR_INVALID_ARGS);
-                return 1;
-        }   
-    }
-    
-    
+
     // cgroup taskset (cpuset)
     if (use_taskset) {
         // Enable cpuset module at master
@@ -424,21 +437,21 @@ int main(int argc, char* argv[]) {
         fclose(cg_fp);
 
         // Create sub group
-        create_directory("/sys/fs/cgroup/Example/inf-sim_lat_mem_rd");
+        create_directory("/sys/fs/cgroup/Example/inf-sim-lat_mem_rd");
 
         // Set CPU num 1 to cgroup config
-        cg_fp = fopen("/sys/fs/cgroup/Example/inf-sim_lat_mem_rd/cpuset.cpus", "w");
+        cg_fp = fopen("/sys/fs/cgroup/Example/inf-sim-lat_mem_rd/cpuset.cpus", "w");
         if (!cg_fp) {
-            printf("ERR: Could not open the croup_cpuset file. (%s)\n", "/sys/fs/cgroup/Example/inf-sim_lat_mem_rd/cpuset.cpus");
+            printf("ERR: Could not open the croup_cpuset file. (%s)\n", "/sys/fs/cgroup/Example/inf-sim-lat_mem_rd/cpuset.cpus");
             return 1;
         }
         fprintf(cg_fp, "%s", cpu_to_set);
         fclose(cg_fp);
 
         // Write PID to the  cpuset file
-        cg_fp = fopen("/sys/fs/cgroup/Example/inf-sim_lat_mem_rd/cgroup.procs", "w");
+        cg_fp = fopen("/sys/fs/cgroup/Example/inf-sim-lat_mem_rd/cgroup.procs", "w");
         if (!cg_fp) {
-            printf("ERR: Could not open the croup_cpuset file. (\"inf-sim_lat_mem_rd\" group)\n");
+            printf("ERR: Could not open the croup_cpuset file. (\"inf-sim-lat_mem_rd\" group)\n");
             return 1;
         }
         fprintf(cg_fp, "%d\n", pid);
@@ -446,9 +459,9 @@ int main(int argc, char* argv[]) {
 
         // Read an integer from the file
         do {
-            cg_fp = fopen("/sys/fs/cgroup/Example/inf-sim_lat_mem_rd/cgroup.procs", "r");
+            cg_fp = fopen("/sys/fs/cgroup/Example/inf-sim-lat_mem_rd/cgroup.procs", "r");
             if (!cg_fp) {
-                printf("ERR: Could not open the croup_cpuset file. (\"inf-sim_lat_mem_rd\" group)\n");
+                printf("ERR: Could not open the croup_cpuset file. (\"inf-sim-lat_mem_rd\" group)\n");
                 fclose(cg_fp);
                 return 1;
             }
@@ -461,19 +474,76 @@ int main(int argc, char* argv[]) {
             
             // 2s check
             if (pid_check_cnt == 20) {
-                printf("ERR: Could not set PID to the cpuset setting. (\"inf-sim_lat_mem_rd\" group)\n");
+                printf("ERR: Could not set PID to the cpuset setting. (\"inf-sim-lat_mem_rd\" group)\n");
                 return 1;
             }
             pid_check_cnt++;
         } while (cpuset_value != pid);
     }
-    
+
+    // File export
+    if (use_file_export) {
+        create_directory("./results/");
+        // 同名のファイルが存在する確認．存在しなければ生成
+        log_fp = fopen(log_file_path, "r");
+        if (!log_fp) {
+            printf("Create log file\n");
+            log_fp = fopen(log_file_path, "w");
+            if (!log_fp) {
+                printf("Failed to create %s.\n", log_file_path);
+                exit(1);
+            }
+        }
+        else {
+            // 既存のファイルを削除してよいか確認してから削除
+            fclose(log_fp);
+            while(!is_check_fdel) {
+                printf("%s is already exist.\n", log_file_path);
+                printf("Remove it? (Y/n)\n");
+                fflush(stdin);
+
+                if (fgets(is_remove, sizeof(is_remove), stdin) == NULL) {
+                    printf("ERR: Text input error.\n");
+                    exit(1);
+                }
+                is_remove[strcspn(is_remove, "\n")] = 0;    // 改行を除去
+                if (strlen(is_remove) == 0 || strcmp(is_remove, "Y") == 0 || strcmp(is_remove, "y") == 0) {
+                    if (remove(log_file_path) != 0) {
+                        printf("ERR: Failed to remove %s.\n", log_file_path);
+                        exit(1);
+                    }
+                    else {
+                        printf("Logfile deleted.\n");
+                    }
+                    is_check_fdel = true;
+                }
+                else if (strcmp(is_remove, "N") == 0 || strcmp(is_remove, "n") == 0) {
+                    printf("Prosess stopped.\n");
+                    is_check_fdel = true;
+                    exit(0);
+                }
+            }
+            // 再度ファイル作成
+            log_fp = fopen(log_file_path, "w");
+            if (!log_fp) {
+                printf("ERR: Failed to create %s.\n", log_file_path);
+                exit(1);
+            }
+            fclose(log_fp);
+        }
+    }
+
+    // シグナルハンドラの登録 (Ctrl+C, killall)
+    signal(SIGINT, signal_handler);
+    signal(SIGTERM, signal_handler);
+
+    printf("max_ws:%lu,stride:%lu\n", max_work_size, stride);
 
     fflush(stdout);
     fflush(stderr);
 
     // アクセス実行
     loads(max_work_size, max_work_size, stride);
-    
+
     return 0;
 }
