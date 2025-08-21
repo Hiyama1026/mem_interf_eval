@@ -14,7 +14,7 @@
     - キャッシュパーティショニングが機能しているかの確認にも使用可能
 
 - wayset
-    - ARM DSUによるWAYを行うための各種ツール
+    - ARM DSUによるWAY操作を行うための各種ツール
 
 ## 手順書Index
 - sim-lmbench内のプログラムをYocto Linux上で使用する方法
