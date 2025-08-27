@@ -42,6 +42,10 @@ void signal_handler(int signum);
 #define F_HUNDRED HUNDRED HUNDRED HUNDRED HUNDRED HUNDRED
 #define THOUSAND F_HUNDRED F_HUNDRED
 
+// バッファサイズとstride幅
+size_t work_size;
+uint64_t stride;
+
 // コメント解除で，同名のログファイルが既存の場合に，削除して良いかをユーザに確認してから削除するようになる．
 //#define CHECK_LOGFILE_DEL
 
@@ -307,7 +311,8 @@ void signal_handler(int signum) {
         if (buf_full_flag) {
             fprintf(log_fp, "WARN: BUFFER FULL.\n\n");
         }
-        fprintf(log_fp, "WriteLatency[ns]\n");
+        fprintf(log_fp, "BufSize,%lu, ,Stride,%lu\n\n", work_size, stride);
+        fprintf(log_fp, "ReadLatency[ns]\n");
         while(report_idx < result_idx){
             fprintf(log_fp, "%.5f\n", buf_log[report_idx]);
             report_idx++;
@@ -319,9 +324,6 @@ void signal_handler(int signum) {
 }
 
 int main(int argc, char* argv[]) {
-    size_t max_work_size;
-    uint64_t stride;
-
     char *endptr;
 	FILE *cg_fp;
     char *file_name;
@@ -335,7 +337,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     
-    max_work_size = (size_t)parse_size(argv[1]);
+    work_size = (size_t)parse_size(argv[1]);
     stride = parse_size(argv[2]);
 
     argc -= 3;
@@ -382,12 +384,12 @@ int main(int argc, char* argv[]) {
         exit(1);
     }
 
-    if (max_work_size == 0) {
-        max_work_size = 5 * 1024 * 1024;    // デフォルト5MB
-        printf("max_ws (default), %lu\n", max_work_size);
+    if (work_size == 0) {
+        work_size = 5 * 1024 * 1024;    // デフォルト5MB
+        printf("max_ws (default), %lu\n", work_size);
     }
-    else if (max_work_size < 5 * 1024) {
-        printf("err: Maximum work size (%lu Byte) is too small (5K or more).\n", max_work_size);
+    else if (work_size < 5 * 1024) {
+        printf("err: Maximum work size (%lu Byte) is too small (5K or more).\n", work_size);
         return 1;
     }
     else {
@@ -551,13 +553,13 @@ int main(int argc, char* argv[]) {
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
 
-    printf("max_ws:%lu,stride:%lu\n", max_work_size, stride);
+    printf("max_ws:%lu,stride:%lu\n", work_size, stride);
 
     fflush(stdout);
     fflush(stderr);
 
     // アクセス実行
-    loads(max_work_size, max_work_size, stride);
+    loads(work_size, work_size, stride);
 
     return 0;
 }

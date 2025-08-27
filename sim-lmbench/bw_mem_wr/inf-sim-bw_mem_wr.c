@@ -36,6 +36,10 @@ FILE *log_fp;
 char log_file_path[256];
 uint32_t result_idx = 0;
 
+// バッファサイズとstride幅 (ログファイル出力用)
+size_t work_size;
+uint64_t stride;
+
 // コメント解除で，同名のログファイルが既存の場合に，削除して良いかをユーザに確認してから削除するようになる．
 //#define CHECK_LOGFILE_DEL
 
@@ -114,6 +118,7 @@ void signal_handler(int signum) {
         if (buf_full_flag) {
             fprintf(log_fp, "WARN: BUFFER FULL.\n\n");
         }
+        fprintf(log_fp, "BufSize,%lu, ,Stride,%lu\n\n", work_size, stride);
         fprintf(log_fp, "WriteLatency[ns]\n");
         while(report_idx < result_idx){
             fprintf(log_fp, "%.5f\n", buf_log[report_idx]);
@@ -214,6 +219,9 @@ main(int argc, char **argv)
 
 	nbytes = state.nbytes = bytes(argv[1]);
 	state.stride_b = bytes(argv[2]);
+    // ログファイル出力用に保持
+    work_size = nbytes;
+    stride = state.stride_b;
 	
 	if ((state.stride_b*CHUNK_SIZE) > nbytes) {
 		printf("ERR: Stride is too large for the work size. (maximum: %luByte)\n", nbytes / CHUNK_SIZE);
