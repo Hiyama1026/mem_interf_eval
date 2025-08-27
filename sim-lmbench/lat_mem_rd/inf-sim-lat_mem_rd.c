@@ -42,6 +42,9 @@ void signal_handler(int signum);
 #define F_HUNDRED HUNDRED HUNDRED HUNDRED HUNDRED HUNDRED
 #define THOUSAND F_HUNDRED F_HUNDRED
 
+// コメント解除で，同名のログファイルが既存の場合に，削除して良いかをユーザに確認してから削除するようになる．
+//#define CHECK_LOGFILE_DEL
+
 struct mem_state {
 	char*	addr;	/* raw pointer returned by malloc */
 	char*	base;	/* page-aligned pointer */
@@ -326,8 +329,6 @@ int main(int argc, char* argv[]) {
 	int cpuset_value = 0;
     int pid_check_cnt = 0;
     pid_t pid = getpid();
-    char is_remove[16];
-    bool is_check_fdel = false;
 
     if (argc < 3) {
 		printf("%s", ERR_INVALID_ARGS);
@@ -356,7 +357,7 @@ int main(int argc, char* argv[]) {
             case 'f':
                 use_file_export = true;
                 file_name = argv[((awc*2)+3)+1];
-                sprintf(log_file_path, "%s%s", "./results/", file_name);
+                sprintf(log_file_path, "%s%s", "./inf-results/", file_name);
                 break;
             case 'e':
                     buf_log_size = strtoull(argv[((awc*2)+3)+1], &endptr, 10);
@@ -483,7 +484,7 @@ int main(int argc, char* argv[]) {
 
     // File export
     if (use_file_export) {
-        create_directory("./results/");
+        create_directory("./inf-results/");
         // 同名のファイルが存在する確認．存在しなければ生成
         log_fp = fopen(log_file_path, "r");
         if (!log_fp) {
@@ -495,8 +496,11 @@ int main(int argc, char* argv[]) {
             }
         }
         else {
-            // 既存のファイルを削除してよいか確認してから削除
             fclose(log_fp);
+#ifdef CHECK_LOGFILE_DEL
+            // 既存のファイルを削除してよいか確認してから削除
+            bool is_check_fdel = false;
+            char is_remove[16];
             while(!is_check_fdel) {
                 printf("%s is already exist.\n", log_file_path);
                 printf("Remove it? (Y/n)\n");
@@ -520,7 +524,7 @@ int main(int argc, char* argv[]) {
                 else if (strcmp(is_remove, "N") == 0 || strcmp(is_remove, "n") == 0) {
                     printf("Prosess stopped.\n");
                     is_check_fdel = true;
-                    exit(0);
+                    exit(2);
                 }
             }
             // 再度ファイル作成
@@ -530,6 +534,16 @@ int main(int argc, char* argv[]) {
                 exit(1);
             }
             fclose(log_fp);
+#else
+            // 既存のログファイルを削除
+            if (remove(log_file_path) != 0) {
+                printf("ERR: Failed to remove %s.\n", log_file_path);
+                exit(1);
+            }
+            else {
+                printf("Logfile deleted.\n");
+            }
+#endif // CHECK_LOGFILE_DEL
         }
     }
 
