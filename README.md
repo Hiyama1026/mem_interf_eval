@@ -42,6 +42,8 @@
     - ``$ cd ~/Pi5-CacheWayPartition``
     - ``$ make``
         - ``wpuser-control``ができれば成功
+- レジスタ操作用ドライバをインストール
+    - ``$ sudo insmod ~/Pi5-CacheWayPartition/way-part-control.ko``
 - wpuser-controlを実行してパーティショニング
     - wpuser-controlに関する情報
         - 実行フォーマットは``$ sudo ./wpuser-control <レジスタ操作ID> <設定値> <操作対象のCPU ID>``
