@@ -59,6 +59,11 @@ void *measure_stride_acesses_ms(void *cookie);
 // If you uncomment, when a log file with the same name already exists, you will be asked whether to delete it before deletion.
 //#define CHECK_LOGFILE_DEL
 
+//#define _DEBUG
+#ifdef _DEBUG
+void confirm_ms_address(void *cookie);
+#endif
+
 struct mem_state {
 	char*	addr;	/* raw pointer returned by malloc */
 	char*	base;	/* page-aligned pointer */
@@ -109,17 +114,6 @@ permutation(size_t max, size_t scale)
 		result[o] = result[i];
 		result[i] = v;
 	}
-
-#ifdef _DEBUG
-	fprintf(stderr, "permutation(%d): {", max);
-	for (i = 0; i < max; ++i) {
-	  fprintf(stderr, "%d", result[i]);
-	  if (i < max - 1) 
-	    fprintf(stderr, ",");
-	}
-	fprintf(stderr, "}\n");
-	fflush(stderr);
-#endif /* _DEBUG */
 #endif
 
 	return (result);
@@ -205,6 +199,10 @@ void *measure_stride_acesses_ms(void *cookie) {
     double res = 0;
 
     num_access = num_iters / 100;       // Divide by the size defined in the macro
+
+#ifdef _DEBUG
+    confirm_ms_address(state);
+#endif
 
     while(1) {
         start_t = get_time_ns();
@@ -338,6 +336,14 @@ loads(size_t max_work_size, size_t size, size_t stride)
             state[sinit].base = (state[sinit-1].tail + stride);
             stride_initialize(&state[sinit]);
         }
+
+#ifdef _DEBUG
+        for (register int tc = 0; tc < num_threads; tc++) {
+            pthread_create(&tsk[tc], NULL, measure_stride_acesses_ms, &state[tc]);
+            pthread_join(tsk[tc], NULL);
+        }
+        exit(0);
+#endif
 
         for (register int tc = 0; tc < num_threads; tc++) {
             pthread_create(&tsk[tc], NULL, measure_stride_acesses_ms, &state[tc]);
@@ -676,3 +682,33 @@ int main(int argc, char* argv[]) {
 
     return 0;
 }
+
+#ifdef _DEBUG
+void confirm_ms_address(void *cookie) {
+    struct mem_state* state = (struct mem_state*)cookie;
+    int task_idx = state->index;
+    char **p = (char**)state->p[0];
+    char *head = (char*)p;
+    char *pre_p = (char*)p;
+    ptrdiff_t watch_stride = state->line;
+    ptrdiff_t pre_stride = state->line;
+
+    printf("TASK: %d\n", task_idx);
+    printf("start: %p\n", (void*)p);
+    while(1) {
+        ONE
+        if ((char*)*p == head) {
+            break;
+        }
+        watch_stride = (char*)p - pre_p;
+        if (watch_stride != pre_stride) {
+            printf("STRIDE CHANGED!\n");
+        }
+        pre_stride = watch_stride;
+        pre_p = (char*)p;
+    }
+    printf("end: %p\n", (void*)p);
+    printf("stride: %ld(%ldK)\n\n", watch_stride, watch_stride/1024);
+    pthread_exit(NULL);
+}
+#endif
