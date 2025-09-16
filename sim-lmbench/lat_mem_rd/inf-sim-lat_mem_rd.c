@@ -403,7 +403,6 @@ void signal_handler(int signum) {
     int report_idx = 0;
 
     //printf("signal_handler (%d)\n", signum);
-    free(bufalloc_ptr);
     if (use_file_export) {
         log_fp = fopen(log_file_path, "w");
         if (!log_fp) {
