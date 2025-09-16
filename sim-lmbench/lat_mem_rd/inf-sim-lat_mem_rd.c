@@ -468,7 +468,7 @@ int main(int argc, char* argv[]) {
                     buf_log_size = strtoull(argv[((awc*2)+3)+1], &endptr, 10);
                     use_buffsize_set = true;
                 break;
-            case 's':
+            case 'm':
                     num_threads = strtoull(argv[((awc*2)+3)+1], &endptr, 10);
                     if (num_threads > 1) 
                         use_multi_thread = true;
