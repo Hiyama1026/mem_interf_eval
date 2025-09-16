@@ -1,5 +1,5 @@
 /*
- * -O2でコンパイルすること
+ * Compile with -O2
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -11,12 +11,17 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include <signal.h>
+#include <pthread.h>
+#include <signal.h>
 
 #define MAX_MEM_PARALLELISM 16
 #define NUM_SAMPLE 100
 
-// アクセス回数
+// Number of accesses
 uint64_t num_iters = 200000 * 1000;
+
+// Number of parallel threads
+int num_threads = 1;
 
 char *ERR_INVALID_ARGS = "arg[1]: Max buffer size\n  > Use 5GB if it is 0.\narg[2]: Stride\n  > Use 2048KB if it is 0.\narg[3 or more]: Reference below.\n  > Use \"-r <REPORT INTERVAL>\" when using report-function.\n  > Use \"-t <CPU NUM>\" when using cgroup-taskset(cpuset).\n  > Use \"-f <FILE NAME>\" when using file export.\n  > Use \"-e <NUM OF ELEMENTS>\" to set the number of logs can be saved.\n";
 
@@ -24,6 +29,7 @@ bool use_taskset = false;
 bool use_report = false;
 bool use_file_export = false;
 bool use_buffsize_set = false;
+bool use_multi_thread = false;
 bool buf_full_flag = false;
 
 double  *buf_log;
@@ -31,6 +37,7 @@ uint32_t buf_log_size = 1024*1024*3;
 FILE *log_fp;
 char log_file_path[256];
 uint32_t result_idx = 0;
+char *bufalloc_ptr;
 
 void signal_handler(int signum);
 
@@ -42,19 +49,24 @@ void signal_handler(int signum);
 #define F_HUNDRED HUNDRED HUNDRED HUNDRED HUNDRED HUNDRED
 #define THOUSAND F_HUNDRED F_HUNDRED
 
-// バッファサイズとstride幅
+// Buffer size and stride width
 size_t work_size;
 uint64_t stride;
 
-// コメント解除で，同名のログファイルが既存の場合に，削除して良いかをユーザに確認してから削除するようになる．
+// Function pointer prototype declaration
+void *measure_stride_acesses_ms(void *cookie);
+
+// If you uncomment, when a log file with the same name already exists, you will be asked whether to delete it before deletion.
 //#define CHECK_LOGFILE_DEL
 
 struct mem_state {
 	char*	addr;	/* raw pointer returned by malloc */
 	char*	base;	/* page-aligned pointer */
+	char*	tail;	/* page-aligned pointer */
 	char*	p[MAX_MEM_PARALLELISM];
 	int	initialized;
 	int	width;
+	int	index;
 	size_t	len;
 	size_t	maxlen;
 	size_t	line;
@@ -137,6 +149,7 @@ base_initialize(void* cookie)
 	lines = NULL;
 	pages = permutation(nmpages, state->pagesize);
 	p = state->addr = (char*)malloc(state->maxlen + 2 * state->pagesize);
+    bufalloc_ptr = p;
 	if (!p) {
 		perror("base_initialize: malloc");
 		exit(1);
@@ -168,16 +181,11 @@ stride_initialize(void* cookie)
 	size_t	stride = state->line;
 	char*	addr;
 
-	base_initialize(cookie);
-	if (!state->initialized) {
-        printf("WARN: !state->initialized\n");
-        return;
-    }
 	addr = state->base;
-
 	for (i = stride; i < range; i += stride) {
         *(char **)&addr[i - stride] = (char*)&addr[i];
 	}
+    state->tail = (char*)&addr[i - stride];
 	*(char **)&addr[i - stride] = (char*)&addr[0]; 
 	state->p[0] = addr;
 }
@@ -187,6 +195,48 @@ static volatile uint64_t	use_result_dummy;
 void
 use_pointer(void *result) { use_result_dummy += (long)result; }
 
+void *measure_stride_acesses_ms(void *cookie) {
+    struct mem_state* state = (struct mem_state*)cookie;
+    int task_idx = state->index;
+    register char **p = (char**)state->p[0];
+    register uint64_t num_access;
+	register size_t i;
+    uint64_t start_t, end_t;
+    double res = 0;
+
+    num_access = num_iters / 100;       // Divide by the size defined in the macro
+
+    while(1) {
+        start_t = get_time_ns();
+        for (i = 0; i < num_access; ++i) {
+            HUNDRED;
+        }
+        end_t = get_time_ns();
+        
+        use_pointer((void *)p);
+        state->p[0] = (char*)p;
+
+        if (task_idx == 0) {
+            if (use_report || use_file_export) {
+                res = (double)(end_t - start_t) / (double)(num_access * 100);      // Time for one memory access
+            }
+            if (use_report && !use_file_export) {
+                fprintf(stderr, "%.5f\n", res);
+                fflush(stderr);
+            }
+            if (use_file_export) {
+                buf_log[result_idx] = res;
+                result_idx++;
+                if (result_idx >= buf_log_size) {
+                    buf_full_flag = true;
+                    signal_handler(15);
+                }
+            }
+        }
+    }
+}
+
+// Use a different function to reduce the overhead of single thread execution
 void measure_stride_acesses(void *cookie) {
     struct mem_state* state = (struct mem_state*)cookie;
     register char **p = (char**)state->p[0];
@@ -195,30 +245,32 @@ void measure_stride_acesses(void *cookie) {
     uint64_t start_t, end_t;
     double res = 0;
 
-    num_access = num_iters / 100;       // マクロ展開量で割る
-    
-    start_t = get_time_ns();
-    for (i = 0; i < num_access; ++i) {
-        HUNDRED;
-    }
-    end_t = get_time_ns();
-    
-    use_pointer((void *)p);
-    state->p[0] = (char*)p;
+    num_access = num_iters / 100;       // Divide by the size defined in the macro
 
-    if (use_report || use_file_export) {
-        res = (double)(end_t - start_t) / (double)(num_access * 100);      // メモリアクセス1回分
-    }
-    if (use_report && !use_file_export) {
-        fprintf(stderr, "%.5f\n", res);
-        fflush(stderr);
-    }
-    if (use_file_export) {
-        buf_log[result_idx] = res;
-        result_idx++;
-        if (result_idx >= buf_log_size) {
-            buf_full_flag = true;
-            signal_handler(15);
+    while(1) {
+        start_t = get_time_ns();
+        for (i = 0; i < num_access; ++i) {
+            HUNDRED;
+        }
+        end_t = get_time_ns();
+        
+        use_pointer((void *)p);
+        state->p[0] = (char*)p;
+
+        if (use_report || use_file_export) {
+            res = (double)(end_t - start_t) / (double)(num_access * 100);      // Time for one memory access
+        }
+        if (use_report && !use_file_export) {
+            fprintf(stderr, "%.5f\n", res);
+            fflush(stderr);
+        }
+        if (use_file_export) {
+            buf_log[result_idx] = res;
+            result_idx++;
+            if (result_idx >= buf_log_size) {
+                buf_full_flag = true;
+                signal_handler(15);
+            }
         }
     }
 }
@@ -226,27 +278,76 @@ void measure_stride_acesses(void *cookie) {
 void
 loads(size_t max_work_size, size_t size, size_t stride)
 {
-	struct mem_state state;
+    size_t thread_size = 0;
+    size_t lastone_size = 0;
+	struct mem_state state[num_threads];
+    pthread_t tsk[num_threads];
 
 	if (size < stride) 
         return;
     
-	state.width = 1;
-	state.len = size;
-	state.maxlen = max_work_size;
-	state.line = stride;
-	state.pagesize = getpagesize();
+	state[0].width = 1;
+	state[0].len = size;
+	state[0].maxlen = max_work_size;
+	state[0].line = stride;
+	state[0].pagesize = getpagesize();
 
 	/*
 	 * Now walk them and time it.
 	 */
-    stride_initialize(&state);
-
-    while(1) {
-        measure_stride_acesses(&state);
+    base_initialize(&state[0]);
+	if (!state[0].initialized) {
+        printf("WARN: !state->initialized\n");
+        return;
     }
-    //free(state.addr);
-    //free(state.pages);
+
+    if (!use_multi_thread) {
+        stride_initialize(&state[0]);
+        measure_stride_acesses(&state[0]);
+    }
+    else {
+        for (int scp = 1; scp < num_threads; scp++) {
+            state[scp] = state[0];
+            state[scp].index = scp;
+        }
+        state[0].index = 0;
+
+        // Calculate each thread size
+        thread_size = size / num_threads;
+        thread_size /= stride;
+        thread_size *= stride;
+        lastone_size = thread_size * (num_threads - 1);
+        lastone_size = size - lastone_size;
+        if (thread_size < stride) {
+            printf("ERR: Too many threads for the buffer size and stride size.\n");
+            free(bufalloc_ptr);
+            exit(1);
+        }
+        
+        // Resize and initialize thread 0
+        state[0].len = thread_size;
+        stride_initialize(&state[0]);
+
+        for (int sinit = 1; sinit < num_threads; sinit++) {
+            if (sinit == (num_threads - 1)) {
+                state[sinit].len = lastone_size;
+            }
+            else {
+                state[sinit].len = thread_size;
+            }
+            state[sinit].base = (state[sinit-1].tail + stride);
+            stride_initialize(&state[sinit]);
+        }
+
+        for (register int tc = 0; tc < num_threads; tc++) {
+            pthread_create(&tsk[tc], NULL, measure_stride_acesses_ms, &state[tc]);
+        }
+        
+        for (int tc = 0; tc < num_threads; tc++) {
+            pthread_join(tsk[tc], NULL);
+            printf("WARN: Thread ended (%d).\n", tc);
+        }
+    }
 }
 
 uint64_t parse_size(const char* str) {
@@ -286,7 +387,7 @@ int create_directory(const char *path) {
     struct stat st = {0};
     int lg_mkdir;
     
-    // ディレクトリが既に存在するかチェック
+    // Check if the directory already exists
     if (stat(path, &st) != 0) {
         printf("Create %s\n", path);
         lg_mkdir = mkdir(path, 0755);
@@ -302,6 +403,7 @@ void signal_handler(int signum) {
     int report_idx = 0;
 
     //printf("signal_handler (%d)\n", signum);
+    free(bufalloc_ptr);
     if (use_file_export) {
         log_fp = fopen(log_file_path, "w");
         if (!log_fp) {
@@ -331,6 +433,7 @@ int main(int argc, char* argv[]) {
 	int cpuset_value = 0;
     int pid_check_cnt = 0;
     pid_t pid = getpid();
+    long nprocs = sysconf(_SC_NPROCESSORS_ONLN);
 
     if (argc < 3) {
 		printf("%s", ERR_INVALID_ARGS);
@@ -365,6 +468,11 @@ int main(int argc, char* argv[]) {
                     buf_log_size = strtoull(argv[((awc*2)+3)+1], &endptr, 10);
                     use_buffsize_set = true;
                 break;
+            case 's':
+                    num_threads = strtoull(argv[((awc*2)+3)+1], &endptr, 10);
+                    if (num_threads > 1) 
+                        use_multi_thread = true;
+                break;
             default:
                 printf("ERR: Unknown argument. (%s)\n\n", argv[(awc*2)+3]);
                 printf("%s", ERR_INVALID_ARGS);
@@ -385,7 +493,7 @@ int main(int argc, char* argv[]) {
     }
 
     if (work_size == 0) {
-        work_size = 5 * 1024 * 1024;    // デフォルト5MB
+        work_size = 5 * 1024 * 1024;    // Default 5MB
         printf("max_ws (default), %lu\n", work_size);
     }
     else if (work_size < 5 * 1024) {
@@ -397,7 +505,7 @@ int main(int argc, char* argv[]) {
     }
 
     if (stride == 0){
-        stride = 2 * 1024;  // デフォルト2K
+        stride = 2 * 1024;  // Default 2K
         printf("stride (default), %lu\n\n", stride);
     }
     else if (stride < sizeof(char *)) {
@@ -406,6 +514,10 @@ int main(int argc, char* argv[]) {
     }
     else {
         // OK
+    }
+
+    if (use_multi_thread && nprocs < (long)num_threads) {
+        printf("WARN: The number of threads exceeds the number of online CPUs. (CPU num: %ld)\n", nprocs);
     }
 
     if (use_file_export) {
@@ -472,7 +584,6 @@ int main(int argc, char* argv[]) {
             int fscan_res = fscanf(cg_fp, "%d", &cpuset_value);
             (void)fscan_res;
             fclose(cg_fp);
-            //printf("PID: %d, FILE: %d!!\n", pid, cpuset_value);
             usleep(100*1000);   // sleep 0.1s
             
             // 2s check
@@ -487,7 +598,7 @@ int main(int argc, char* argv[]) {
     // File export
     if (use_file_export) {
         create_directory("./inf-results/");
-        // 同名のファイルが存在する確認．存在しなければ生成
+        // Check if a file with the same name exists. If not, create it.
         log_fp = fopen(log_file_path, "r");
         if (!log_fp) {
             printf("Create log file\n");
@@ -500,7 +611,7 @@ int main(int argc, char* argv[]) {
         else {
             fclose(log_fp);
 #ifdef CHECK_LOGFILE_DEL
-            // 既存のファイルを削除してよいか確認してから削除
+            // Ask whether to delete the existing file before deleting
             bool is_check_fdel = false;
             char is_remove[16];
             while(!is_check_fdel) {
@@ -529,7 +640,7 @@ int main(int argc, char* argv[]) {
                     exit(2);
                 }
             }
-            // 再度ファイル作成
+            // Create the file again
             log_fp = fopen(log_file_path, "w");
             if (!log_fp) {
                 printf("ERR: Failed to create %s.\n", log_file_path);
@@ -537,7 +648,7 @@ int main(int argc, char* argv[]) {
             }
             fclose(log_fp);
 #else
-            // 既存のログファイルを削除
+            // Delete the existing log file
             if (remove(log_file_path) != 0) {
                 printf("ERR: Failed to remove %s.\n", log_file_path);
                 exit(1);
@@ -549,7 +660,7 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // シグナルハンドラの登録 (Ctrl+C, killall)
+    // Register signal handler (Ctrl+C, killall)
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
 
@@ -558,8 +669,12 @@ int main(int argc, char* argv[]) {
     fflush(stdout);
     fflush(stderr);
 
-    // アクセス実行
+    // Execute access
     loads(work_size, work_size, stride);
+    
+    while (1) {
+        pause();
+    }
 
     return 0;
 }
