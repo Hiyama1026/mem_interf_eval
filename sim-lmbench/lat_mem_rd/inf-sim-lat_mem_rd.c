@@ -577,7 +577,6 @@ int main(int argc, char* argv[]) {
             cg_fp = fopen("/sys/fs/cgroup/Example/inf-sim-lat_mem_rd/cgroup.procs", "r");
             if (!cg_fp) {
                 printf("ERR: Could not open the croup_cpuset file. (\"inf-sim-lat_mem_rd\" group)\n");
-                fclose(cg_fp);
                 return 1;
             }
 
