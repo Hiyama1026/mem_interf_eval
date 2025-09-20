@@ -1,1 +1,5 @@
 img/
+# Compiled binaries
+*.o
+*.exe
+parse_numbers
