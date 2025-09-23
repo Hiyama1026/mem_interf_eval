@@ -172,13 +172,20 @@ void export_counter(char* cnt_name0, char* cnt_name1, char* cnt_name2,
     uint64_t val3 = 0;
     uint64_t val4 = 0;
     uint64_t val5 = 0;
+    ssize_t ret[6];
 
-    read(fd0, &val0, sizeof(val0));
-    read(fd1, &val1, sizeof(val1));
-    read(fd2, &val2, sizeof(val2));
-    read(fd3, &val3, sizeof(val3));
-    read(fd4, &val4, sizeof(val4));
-    read(fd5, &val5, sizeof(val5));
+    ret[0] = read(fd0, &val0, sizeof(val0));
+    ret[1] = read(fd1, &val1, sizeof(val1));
+    ret[2] = read(fd2, &val2, sizeof(val2));
+    ret[3] = read(fd3, &val3, sizeof(val3));
+    ret[4] = read(fd4, &val4, sizeof(val4));
+    ret[5] = read(fd5, &val5, sizeof(val5));
+
+    for (int t = 0; t < 6; t++) {
+        if (ret[t] < 0) {
+            printf("WARN: Failed to read fd%d.\n", t);
+        }
+    }
 
     printf("%s, %"PRIu64"\n", cnt_name0, val0);
     printf("%s, %"PRIu64"\n", cnt_name1, val1);
@@ -199,13 +206,20 @@ void export_and_clean_counter(char* cnt_name0, char* cnt_name1, char* cnt_name2,
     uint64_t val3 = 0;
     uint64_t val4 = 0;
     uint64_t val5 = 0;
+    ssize_t ret[6];
 
-    read(fd0, &val0, sizeof(val0));
-    read(fd1, &val1, sizeof(val1));
-    read(fd2, &val2, sizeof(val2));
-    read(fd3, &val3, sizeof(val3));
-    read(fd4, &val4, sizeof(val4));
-    read(fd5, &val5, sizeof(val5));
+    ret[0] = read(fd0, &val0, sizeof(val0));
+    ret[1] = read(fd1, &val1, sizeof(val1));
+    ret[2] = read(fd2, &val2, sizeof(val2));
+    ret[3] = read(fd3, &val3, sizeof(val3));
+    ret[4] = read(fd4, &val4, sizeof(val4));
+    ret[5] = read(fd5, &val5, sizeof(val5));
+
+    for (int t = 0; t < 6; t++) {
+        if (ret[t] < 0) {
+            printf("WARN: Failed to read fd%d.\n", t);
+        }
+    }
 
     printf("%s, %"PRIu64"\n", cnt_name0, val0);
     printf("%s, %"PRIu64"\n", cnt_name1, val1);
