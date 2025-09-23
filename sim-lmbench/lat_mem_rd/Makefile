@@ -14,14 +14,14 @@ $(TARGET): $(SRCS)
 
 TARGET = inf-sim-lat_mem_rd
 $(TARGET): $(SRCS)
-	$(CC) -o $@ $(SRCS) $(CFLAGS)
+	$(CC) -o $@ $^ $(CFLAGS)
 
 TARGET = pmu-sim-lat_mem_rd
 # Path to pmu_counter.c
 PMU_COUNTER_PATH ?= ../../pmu_counter/pmu_counter.c
 SRCS += $(PMU_COUNTER_PATH)
 $(TARGET): $(SRCS)
-	$(CC) -o $@ $(SRCS) $(CFLAGS)
+	$(CC) -o $@ $^ $(CFLAGS)
 
 clean:
 	rm -f $(TARGETS)
