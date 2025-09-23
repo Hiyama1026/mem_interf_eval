@@ -7,26 +7,28 @@
     - バッファ内をstrideアクセスして，メモリRead1回に要した時間を報告
 - コンパイル方法
     - -O2でコンパイルする (gcc)
-        - ``$ gcc -O2 -o sim-lat_mem_rd sim-lat_mem_rd.c ``
+        - ``$ make sim-lat_mem_rd``
+        - ``$ gcc -O2 -o sim-lat_mem_rd sim-lat_mem_rd.c -pthread -lrt -D_GNU_SOURCE`` でも可
 - 使用方法
     - 第一引数に最大バッファサイズ，第二引数にstride幅を入力 (順番は固定)
         - ``$ ./sim-lat_mem_rd 5M 2K``
         - 実行するとバッファサイズが最大バッファサイズまでステップ的に増加していく
         - バッファ内を指定した幅でstrideアクセスする
-    - OneShotモード
-        - バッファサイズとstride幅よりも後ろに``-o``を付けると指定したバッファサイズのみを計測
-            ```sh
-            $ ./sim-lat_mem_rd 5M 2K -o
-            5.00000,24.021
-            ```
-    - tasksetオプション
-        - cgroupのcpusetを使用して自タスクの実行コアを固定するオプション
-            - Yocto Linuxなど，tasksetコマンドが使用できない環境下での使用を想定
-        - バッファサイズとstride幅よりも後ろに``-t``を付けることによりコア固定
-            - ``$ sudo ./sim-lat_mem_rd 5M 2K -t 2``
+    - 第三引数以降で以下のオプションを使用可能 (順番は任意)
+        - ``-t <CPU ID>``：taskset機能
+            - スレッドにCPUアフィニティを設定する
+            - 複数コアを指定する場合はコンマ区切りで入力する
+        - ``-g <CPU ID>``：cgroup v2を使用したtaskset機能
+            - cgroupを使用するため環境によってはsudo実行が必要
+            - 複数コアを指定する場合はコンマ区切りで入力する
+        - ``-o``：OneShotモード
+            - 指定したバッファサイズのみを計測
+                ```sh
+                $ ./sim-lat_mem_rd 5M 2K -o
+                5.00000,24.021
+                ```
     - その他
-        - -oと-tは併用可能
-        - バッファサイズとstride幅以外はオプションの入力順を問わない
+        - -gと-tは併用不可能
 
 ### inf-sim-lat_mem_rd.c
 - 概要
@@ -35,12 +37,27 @@
     - strideアクセスで無限にメモリRDを行う
 - コンパイル方法
     - -O2でコンパイルする (gcc)
-        - ``$ gcc -O2 -o inf-sim-bw_mem_wr inf-sim-bw_mem_wr.c``
+        - ``$ make inf-sim-lat_mem_rd``
+        - ``gcc -O2 -o inf-sim-lat_mem_rd inf-sim-lat_mem_rd.c -pthread -lrt -D_GNU_SOURCE``でも可
 - 使用方法
     - 第一引数にバッファサイズ，第二引数にstride幅を入力 (順番は固定)
         - ``$ ./inf-sim-lat_mem_rd 2M 64``
     - 第三引数以降で以下のオプションを使用可能 (順番は任意)
-        - ``-t <CPU ID>``：cgroup v2を使用したtaskset機能
+        - ``-t <CPU ID>``：taskset機能 (スレッド単位)
+            - スレッドにCPUアフィニティを設定する (マルチスレッド対応)
+            - 複数コアを指定する場合はコンマ区切りで入力する
+            - CPU番号の大きいものから順にセットする
+                - ``「スレッド数」>「セットするCPU数」``の場合は各CPUに一つずつスレッドをセットしていき，余ったスレッドに全てのCPUを割り当てる
+                    ```sh
+                    (例) スレッド数：4，セットするCPU数：3 (CPU1~3)
+                    $ ./inf-sim-lat_mem_rd 2M 64 -t 1,2,3 -m 4  # 実行コマンド
+                    - スレッド1 -> CPU3
+                    - スレッド2 -> CPU2
+                    - スレッド3 -> CPU1
+                    - スレッド4 -> CPU1, CPU2, CPU3
+                    ```
+                - (注)マルチスレッド時はバッファを分割し，各スレッド分割された領域を占有するため，スレッドが待たされる事により上記の場合はアクセス範囲が小さくなる可能性がある
+        - ``-g <CPU ID>``：cgroup v2を使用したtaskset機能
             - cgroupを使用するため環境によってはsudo実行が必要
             - 複数コアを指定する場合はコンマ区切りで入力する
         - ``-r <INTERVAL>``：実行時のメモリRDレイテンシを表示
@@ -64,7 +81,8 @@
         - ``$ ./inf-sim-lat_mem_rd 2M 64 -r 500000000 -f test.csv``
         - ``$ sudo ./inf-sim-lat_mem_rd 2M 16K -m 3 -t 1,2,3``
 - その他
-    - ファイル出力を行う場合，バッファフルでプログラムが終了した場合はログファイルの先頭に警告が表示される
+    - -gと-tは併用不可能
+    - ファイル出力を行う場合，ログ出力用のバッファフルでプログラムが終了した場合はログファイルの先頭に警告が表示される
         - ``WARN: BUFFER FULL.``
     - プログラムの終了方法はtaskkillと強制終了(Ctrl+C)に対応している
     - stride幅はキャッシュラインサイズと一致させることで効率よくキャッシュを汚すことができる
@@ -76,6 +94,8 @@
 - コンパイル方法
     - ``pmu-sim-lat_mem_rd.c``を本レポジトリ内にある``pmu_counter.c``と一緒に-O2でコンパイルする(gcc)
         - ``$ gcc -O2 -o pmu-sim-lat_mem_rd pmu-sim-lat_mem_rd.c <PATH TO pmu_counter.c>``
+    - ``$ make pmu-sim-lat_mem_rd`` でも可
+        - Makefile内の``pmu_counter.c``までのパスは適宜合わせること
 - 実行方法
     - 方法1：``-t``オプションでベンチの実行コアを指定して実行する
         - ``pmu_counter.c``の仕様に合わせて``create_six_event_group()``や``export_and_clean_counter()``の設定を行う

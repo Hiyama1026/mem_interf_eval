@@ -1,5 +1,5 @@
 /*
- * -O2でコンパイルすること ($ gcc -O2 -Wall -o memsys_lmb memsys_lmb.c -lm)
+ * Compile with -O2
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -9,34 +9,39 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <unistd.h>
-
+# include <sched.h>
 #include <sys/stat.h>
 #include <errno.h>
 
-#define MAX_MEM_PARALLELISM 16
+#define MAX_CPU_NUM 32
 #define NUM_SAMPLE 100
 
-// アクセス回数
+// Number of accesses
 uint64_t num_iters = 1200 * 1000;
-// wsをstrideで割り切れるときに立てるフラグ
+// Flag set when buffer-size is divisible by stride
 bool just_size_flug = false;
-// 計測時間保存用配列
+// Array to store measurement times
 double times[NUM_SAMPLE];
 
 #define kBufferSizePow2Low 13
 #define kBufferSizePow2High 29
 
-// ワークサイズをステップ増加するかを示すフラグ
+bool use_threadset = false;
+bool use_cg_taskset = false;
 bool use_step = true;
+
+int* cpus_to_set;
+int thread_cpu_num;
 
 //#define _DEBUG
 
-// 差分計算用
+// For difference calculation
 #include <stddef.h>
 ptrdiff_t diff;
 ptrdiff_t ca_diff;
 char* prev_p;
 char** pre_caa_p;
+
 
 #define	ONE	p = (char **)*p;
 #define	FIVE	ONE ONE ONE ONE ONE
@@ -49,7 +54,7 @@ char** pre_caa_p;
 struct mem_state {
 	char*	addr;	/* raw pointer returned by malloc */
 	char*	base;	/* page-aligned pointer */
-	char*	p[MAX_MEM_PARALLELISM];
+	char*	p;
 	int	initialized;
 	int	width;
 	size_t	len;
@@ -70,23 +75,33 @@ uint64_t get_time_ns() {
     return 1000000000ULL * t.tv_sec + t.tv_nsec;
 }
 
-// 比較関数（qsort用）
-int compare(const void* a, const void* b) {
-    double diff = *(double*)a - *(double*)b;
-    return (diff > 0) - (diff < 0); // 正負を返す
+void error_print(void) {
+    printf("arg[1]: Max buffer size\n  > Use 5GB if it is 0.\n");
+    printf("arg[2]: Stride\n");
+    printf("  > Use 2048KB if it is 0.\n");
+    printf("arg[3 or more]: Reference below.\n");
+    printf("  > Use \"-g <CPU NUM>\" when using cgroup-taskset(cpuset).\n");
+    printf("  > Use \"-t <CPU NUM>\" when pinning threads to specific CPUs.\n");
+    printf("  > Use \"-o <CPU NUM>\" when using one-shot mode.\n");
 }
 
-// 中央値を求める
+// Comparison function (for qsort)
+int compare(const void* a, const void* b) {
+    double diff = *(double*)a - *(double*)b;
+    return (diff > 0) - (diff < 0);     // Return positive or negative
+}
+
+// Find the median
 double find_median(double* arr, size_t size) {
     if (size == 0) {
         fprintf(stderr, "Array size must be greater than 0.\n");
         exit(EXIT_FAILURE);
     }
 
-    // 配列をソート
+    // sort
     qsort(arr, size, sizeof(double), (int (*)(const void*, const void*))compare);
 
-    // 中央値を計算
+    // Calculate median
     if (size % 2 == 0) {
         return (arr[size / 2 - 1] + arr[size / 2]) / 2.0;
     } else {
@@ -94,10 +109,10 @@ double find_median(double* arr, size_t size) {
     }
 }
 
-// 10周アクセスして，キャッシュに乗せる
+// Access 10 times to warm up cache
 void warm_up(void *cookie, size_t list_len) {
     struct mem_state* state = (struct mem_state*)cookie;
-    char **p = (char**)state->p[0];
+    char **p = (char**)state->p;
     
     for (volatile size_t j = 0; j < list_len; ++j) {
         TEN;
@@ -210,7 +225,7 @@ stride_initialize(void* cookie)
         *(char **)&addr[i - stride] = (char*)&addr[i];
 	}
 	*(char **)&addr[i - stride] = (char*)&addr[0]; 
-	state->p[0] = addr;
+	state->p = addr;
 
     if (!(range % stride))
         just_size_flug = true;
@@ -225,7 +240,7 @@ use_pointer(void *result) { use_result_dummy += (long)result; }
 
 double measure_stride_acesses(void *cookie) {
     struct mem_state* state = (struct mem_state*)cookie;
-    register char **p = (char**)state->p[0];
+    register char **p = (char**)state->p;
     register uint64_t num_access;
 	register size_t i;
 	size_t list_len = (state->len / state->line) + 1;
@@ -234,13 +249,13 @@ double measure_stride_acesses(void *cookie) {
     
     
 	if (just_size_flug)
-        list_len--;     // WSがstrideで割り切れるとき，list_lenは1長くなるためデクリメント
+        list_len--;     // When the buffer size is divisible by stride, list_len increases by 1 and is decremented.
     
-    #if 1   // 計測用
+    #if 1   // Measurement
     
     warm_up(cookie, list_len);
 
-    num_access = num_iters / 100;       // マクロ展開量で割る
+    num_access = num_iters / 100;       // Divide by the macro defined size.
     
     start_t = get_time_ns();
     for (i = 0; i < num_access; ++i) {
@@ -249,12 +264,12 @@ double measure_stride_acesses(void *cookie) {
     }
     
     use_pointer((void *)p);
-    state->p[0] = (char*)p;
+    state->p = (char*)p;
     
     end_t = get_time_ns();
-    res = (double)(end_t - start_t) / (double)(num_access * 100);      // メモリアクセス1回分
+    res = (double)(end_t - start_t) / (double)(num_access * 100);
     
-    #else   // アクセス場所を表示するのみ(debug)
+    #else   // Address print only(debug)
     ca_diff = 0;
     diff = 0;
     prev_p = (char*)p;
@@ -295,16 +310,6 @@ loads(size_t max_work_size, size_t size, size_t stride)
 	state.line = stride;
 	state.pagesize = getpagesize();
 
-#if 0
-	(*fpInit)(0, &state);
-	fprintf(stderr, "loads: after init\n");
-	(*benchmark_loads)(2, &state);
-	fprintf(stderr, "loads: after benchmark\n");
-	mem_cleanup(0, &state);
-	fprintf(stderr, "loads: after cleanup\n");
-	settime(1);
-	save_n(1);
-#else
 	/*
 	 * Now walk them and time it.
 	 */
@@ -317,7 +322,6 @@ loads(size_t max_work_size, size_t size, size_t stride)
     
     free(state.addr);
     free(state.pages);
-#endif
 
 	/* We want to get to nanoseconds / load. */
 	fprintf(stderr, "%.5f,%.3f\n", size / (1024. * 1024.), result);
@@ -363,7 +367,7 @@ int create_directory(const char *path) {
     struct stat st = {0};
     int lg_mkdir;
     
-    // ディレクトリが既に存在するかチェック
+    // Check if the directory already exists
     if (stat(path, &st) != 0) {
         printf("Create %s\n", path);
         lg_mkdir = mkdir(path, 0755);
@@ -375,148 +379,164 @@ int create_directory(const char *path) {
     return 0;
 }
 
+void cg_taskset(pid_t pid, char* cpu_to_set){
+    int cpuset_value = 0;
+    int pid_check_cnt = 0;
+    FILE *cg_fp;
+
+    // Enable cpuset module at master
+    cg_fp = fopen("/sys/fs/cgroup/cgroup.subtree_control", "w");
+    if (!cg_fp) {
+        printf("ERR: Could not open the croup-v2 cpuset file. (%s)\n", "/sys/fs/cgroup/cgroup.subtree_control");
+        exit(1);
+    }
+    fprintf(cg_fp, "%s", "+cpuset");
+    fclose(cg_fp);
+
+    // Create parent group
+    create_directory("/sys/fs/cgroup/sim_lmb");
+
+    // Enable cpuset module at parent group
+    cg_fp = fopen("/sys/fs/cgroup/sim_lmb/cgroup.subtree_control", "w");
+    if (!cg_fp) {
+        printf("ERR: Could not open the croup-v2 cpuset file. (%s)\n", "/sys/fs/cgroup/cgroup.subtree_control");
+        exit(1);
+    }
+    fprintf(cg_fp, "%s", "+cpuset");
+    fclose(cg_fp);
+
+    // Create sub group
+    create_directory("/sys/fs/cgroup/sim_lmb/sim-lat_mem_rd");
+
+    // Set CPU num 1 to cgroup config
+    cg_fp = fopen("/sys/fs/cgroup/sim_lmb/sim-lat_mem_rd/cpuset.cpus", "w");
+    if (!cg_fp) {
+        printf("ERR: Could not open the croup-v2 cpuset file. (%s)\n", "/sys/fs/cgroup/sim_lmb/sim-lat_mem_rd/cpuset.cpus");
+        exit(1);
+    }
+    fprintf(cg_fp, "%s", cpu_to_set);
+    fclose(cg_fp);
+
+    // Write PID to the  cpuset file
+    cg_fp = fopen("/sys/fs/cgroup/sim_lmb/sim-lat_mem_rd/cgroup.procs", "w");
+    if (!cg_fp) {
+        printf("ERR: Could not open the croup-v2 cpuset file. (\"sim-lat_mem_rd\" group)\n");
+        exit(1);
+    }
+    fprintf(cg_fp, "%d\n", pid);
+    fclose(cg_fp);
+
+    // Read an integer from the file
+    do {
+        cg_fp = fopen("/sys/fs/cgroup/sim_lmb/sim-lat_mem_rd/cgroup.procs", "r");
+        if (!cg_fp) {
+            printf("ERR: Could not open the croup-v2 cpuset file. (\"sim-lat_mem_rd\" group)\n");
+            exit(1);
+        }
+
+        int fscan_res = fscanf(cg_fp, "%d", &cpuset_value);
+        (void)fscan_res;
+        fclose(cg_fp);
+        usleep(100*1000);   // sleep 0.1s
+        
+        // 2s check
+        if (pid_check_cnt == 20) {
+            printf("ERR: Could not set PID to the cpuset setting. (\"sim-lat_mem_rd\" group)\n");
+            exit(1);
+        }
+        pid_check_cnt++;
+    } while (cpuset_value != pid);
+}
+
+int compare_desc(const void *a, const void *b) {
+    int va = *(const int*)a;
+    int vb = *(const int*)b;
+    return vb - va;
+}
+
+int* extract_cpunum(char* cpu_src){
+    int* extracted = malloc(sizeof(int) * MAX_CPU_NUM);
+    char *token = strtok(cpu_src, ",");
+
+    thread_cpu_num = 0;
+    while (token != NULL) {
+        if (thread_cpu_num > MAX_CPU_NUM - 1) {
+            printf("ERR: Too many cpus to set. (MAX_CPU_NUM: %d)\n", MAX_CPU_NUM);
+            exit(1);
+        }
+        extracted[thread_cpu_num] = atoi(token);
+        token = strtok(NULL, ",");
+        thread_cpu_num++;
+    }
+
+    qsort(extracted, thread_cpu_num, sizeof(int), compare_desc);
+
+    return extracted;
+}
+
+void cpu_set_all(cpu_set_t* cpu_set, int* cpus_num) {
+    int cnt = 0;
+
+    while(cnt < thread_cpu_num) {
+        CPU_SET(cpus_num[cnt], cpu_set);
+        cnt++;
+    }
+}
+
 int main(int argc, char* argv[]) {
     size_t max_work_size;
     size_t size = 0;
     uint64_t stride;
-    bool use_taskset = false;
-    char* cpu_to_set;
-    int cpuset_value = 0;
-    int pid_check_cnt = 0;
+    char* ch_cpu_to_set = NULL;
     pid_t pid = getpid();
-    FILE *cg_fp;
+    cpu_set_t cpu_set;
+    int ts_result;
 
-    if (argc != 3 && argc != 4 && argc != 5 && argc != 6) {
-        printf("arg[1]: Max buffer size\n");
-        printf("  > Use 5GB if it is 0.\n");
-        printf("arg[2]: Stride\n");
-        printf("  > Use 2048KB if it is 0.\n");
-        printf("arg[3 ~ 5]: Reference below.\n");
-        printf("  > Use \"-o\" if you use OneShot mode.\n");
-        printf("  > Use \"-t <CPU NUM>\" when using cgroup-taskset(cpuset).\n");
+    if (argc < 3) {
+		error_print();
         return 1;
     }
-
-    if (argc == 4) {
-        if (strcmp(argv[3], "-o") == 0) {
-            use_step = false;
-        }
-        else {
-            printf("ERR: Unkown argument (%s).\n", argv[3]);
-            return 1;
-        }
-    }
-    if (argc == 5) {
-        if (strcmp(argv[3], "-t") == 0) {
-            use_taskset = true;
-            cpu_to_set = argv[4];
-        }
-        else {
-            printf("ERR: Unkown argument (%s).\n", argv[3]);
-            return 1;
-        }
-    }
-    if (argc == 6) {
-        if (strcmp(argv[3], "-o") == 0) {       // $0 $1 $2 -o -t <CPU-NUM>
-            if (strcmp(argv[4], "-t") != 0) {
-                printf("ERR: Unkown argument (%s).\n", argv[4]);
-                return 1;
-            }
-            use_step = false;
-            use_taskset = true;
-            cpu_to_set = argv[5];
-        }
-        else if (strcmp(argv[3], "-t") == 0) {     // $0 $1 $2 -t <CPU-NUM> -o
-            if (strcmp(argv[5], "-o") != 0) {
-                printf("ERR: Unkown argument (%s).\n", argv[5]);
-                return 1;
-            }
-            use_step = false;
-            use_taskset = true;
-            cpu_to_set = argv[4];
-        }
-        else {
-            printf("ERR: Unkown argument (%s).\n", argv[3]);
-            return 1;
-        }
-    }
-
-    // cgroup taskset (cpuset)
-    if (use_taskset) {
-        // Enable cpuset module at master
-        cg_fp = fopen("/sys/fs/cgroup/cgroup.subtree_control", "w");
-        if (!cg_fp) {
-            printf("ERR: Could not open the croup_cpuset file. (%s)\n", "/sys/fs/cgroup/cgroup.subtree_control");
-            return 1;
-        }
-        fprintf(cg_fp, "%s", "+cpuset");
-        fclose(cg_fp);
-
-        // Create parent group
-        create_directory("/sys/fs/cgroup/Example");
-
-        // Enable cpuset module at parent group
-        cg_fp = fopen("/sys/fs/cgroup/Example/cgroup.subtree_control", "w");
-        if (!cg_fp) {
-            printf("ERR: Could not open the croup_cpuset file. (%s)\n", "/sys/fs/cgroup/cgroup.subtree_control");
-            return 1;
-        }
-        fprintf(cg_fp, "%s", "+cpuset");
-        fclose(cg_fp);
-
-        // Create sub group
-        create_directory("/sys/fs/cgroup/Example/sim_lat_mem_rd");
-
-        // Set CPU num 1 to cgroup config
-        cg_fp = fopen("/sys/fs/cgroup/Example/sim_lat_mem_rd/cpuset.cpus", "w");
-        if (!cg_fp) {
-            printf("ERR: Could not open the croup_cpuset file. (%s)\n", "/sys/fs/cgroup/Example/sim_lat_mem_rd/cpuset.cpus");
-            return 1;
-        }
-        fprintf(cg_fp, "%s", cpu_to_set);
-        fclose(cg_fp);
-
-        // Write PID to the  cpuset file
-        cg_fp = fopen("/sys/fs/cgroup/Example/sim_lat_mem_rd/cgroup.procs", "w");
-        if (!cg_fp) {
-            printf("ERR: Could not open the croup_cpuset file. (\"sim_lat_mem_rd\" group)\n");
-            return 1;
-        }
-        fprintf(cg_fp, "%d\n", pid);
-        fclose(cg_fp);
-
-        // Read an integer from the file
-        do {
-            cg_fp = fopen("/sys/fs/cgroup/Example/sim_lat_mem_rd/cgroup.procs", "r");
-            if (!cg_fp) {
-                printf("ERR: Could not open the croup_cpuset file. (\"sim_lat_mem_rd\" group)\n");
-                fclose(cg_fp);
-                return 1;
-            }
-
-            int fscan_res = fscanf(cg_fp, "%d", &cpuset_value);
-            (void)fscan_res;
-            fclose(cg_fp);
-            //printf("PID: %d, FILE: %d!!\n", pid, cpuset_value);
-            usleep(100*1000);   // sleep 0.1s
-            
-            // 2s check
-            if (pid_check_cnt == 20) {
-                printf("ERR: Could not set PID to the cpuset setting. (\"sim_lat_mem_rd\" group)\n");
-                return 1;
-            }
-            pid_check_cnt++;
-        } while (cpuset_value != pid);
-    }
-
-    // ワークサイズ・strideを設定 (ステップ実行時には設定内容を出力)
+    
     max_work_size = (size_t)parse_size(argv[1]);
     stride = parse_size(argv[2]);
 
+    argc -= 3;
+    for (int awc = 0; awc < argc; awc+=2) {        
+        switch (argv[awc+3][1]) {
+            case 'g':
+                use_cg_taskset = true;
+                ch_cpu_to_set = argv[(awc+3)+1];
+                break;
+            case 't':
+                use_threadset = true;
+                ch_cpu_to_set = argv[(awc+3)+1];
+                cpus_to_set = extract_cpunum(ch_cpu_to_set);
+                break;
+            case 'o':
+                use_step = false;
+                awc--;
+                break;
+            default:
+                printf("ERR: Unknown argument. (%s)\n\n", argv[awc+3]);
+                error_print();
+                return 1;
+        }
+    }
+
+    if (use_threadset && use_cg_taskset) {
+        printf("ERR: The -g option and the -t option cannot be used together.\n\n");
+        error_print();
+        exit(1);
+    }
+
+    // Set work size and stride (output settings in step mode)
+    max_work_size = (size_t)parse_size(argv[1]);
+    stride = parse_size(argv[2]);
+    
     if (max_work_size == 0) {
-        max_work_size = 5 * 1024 * 1024;    // デフォルト5MB
+        max_work_size = 5 * 1024 * 1024;    // Default 5MB
         if (use_step)
-            printf("max_ws (default), %lu\n", max_work_size);
+        printf("max_ws (default), %lu\n", max_work_size);
     }
     else if (max_work_size < 5 * 1024) {
         printf("err: Maximum work size (%lu Byte) is too small (5K or more).\n", max_work_size);
@@ -527,7 +547,7 @@ int main(int argc, char* argv[]) {
             printf("max_ws, %lu\n", max_work_size);
     }
     if (stride == 0){
-        stride = 2 * 1024;  // デフォルト2K
+        stride = 2 * 1024;  // Default 2K
         if (use_step)
             printf("stride (default), %lu\n\n", stride);
     }
@@ -537,11 +557,25 @@ int main(int argc, char* argv[]) {
     }
     else {
         if (use_step)
-            printf("stride, %lu\n\n", stride);
+        printf("stride, %lu\n\n", stride);
+    }
+
+    if (use_threadset) {
+        CPU_ZERO(&cpu_set);
+        cpu_set_all(&cpu_set, cpus_to_set);
+        ts_result = sched_setaffinity(pid, sizeof(cpu_set_t), &cpu_set);
+        if (ts_result != 0) {
+            printf("WARN: Failed to set cpu affinity.\n");
+        }
+    }
+
+    // cgroup taskset (cpuset)
+    if (use_cg_taskset) {
+        cg_taskset(pid, ch_cpu_to_set);
     }
 
     if (use_step) {
-        // ステップ実行時のみ表示
+        // Display only in step mode
         printf("Buffer [MB], Latency [ns]\n");
     }
 
@@ -550,7 +584,7 @@ int main(int argc, char* argv[]) {
 
     int i = kBufferSizePow2Low;
 
-    if (use_step) {     // ステップ
+    if (use_step) {     // Step mode
         while (i < kBufferSizePow2High && size <= max_work_size) {
             const int64_t num_bt = 2;
             for (int64_t b = (1 << num_bt) - 1; b >= 0; b--) {
@@ -563,12 +597,12 @@ int main(int argc, char* argv[]) {
             i++;
         }
     }
-    else {              // 指定されたサイズ(max_work_size)のみ
+    else {              // Only the specified size (max_work_size)
         loads(max_work_size, max_work_size, stride);
     }
 
     if (use_step) {
-        // ステップ実行時のみ表示
+        // Display only in step mode
         printf("\ntest end (ws: %lu)\n", max_work_size);
     }
     return 0;
