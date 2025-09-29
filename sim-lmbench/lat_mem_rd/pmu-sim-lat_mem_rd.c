@@ -18,8 +18,8 @@ extern struct perf_event_attr pe0, pe1, pe2, pe3, pe4, pe5;
 extern long fd0, fd1, fd2, fd3, fd4, fd5;
 void reset_and_start_counter();
 void stop_counter();
-void create_six_event_group();
-void export_and_clean_counter();
+void create_six_event_group(int target_cpu, int event0, int event1, int event2, int event3, int event4, int event5);
+void export_and_clean_counter(char* cnt_name0, char* cnt_name1, char* cnt_name2, char* cnt_name3, char* cnt_name4, char* cnt_name5);
 // PMUカウンタの計測対象CPU
 int target_cpu = 3;
 
