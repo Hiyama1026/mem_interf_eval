@@ -10,7 +10,10 @@
 #include <stddef.h>
 #include <unistd.h>
 #include <sys/stat.h>
+#include <sched.h>
+#include <errno.h>
 
+#define MAX_CPU_NUM 1
 #define MAX_MEM_PARALLELISM 16
 
 // PMUカウンタ
@@ -23,7 +26,11 @@ void export_and_clean_counter(char* cnt_name0, char* cnt_name1, char* cnt_name2,
 // PMUカウンタの計測対象CPU
 int target_cpu = 3;
 
-bool use_taskset = false;
+bool use_cg_taskset = false;
+bool use_threadset = false;
+
+int* cpus_to_set;
+int thread_cpu_num;
 
 // アクセス回数
 uint64_t num_iters = 1200 * 1000;
@@ -64,6 +71,15 @@ struct mem_state {
 	size_t*	lines;
 	size_t*	words;
 };
+
+void error_print(void) {
+    printf("arg[1]: Max buffer size\n  > Use 5GB if it is 0.\n");
+    printf("arg[2]: Stride\n");
+    printf("  > Use 2048KB if it is 0.\n");
+    printf("arg[3 or more]: Reference below.\n");
+    printf("  > Use \"-g <CPU NUM>\" when using cgroup-taskset(cpuset).\n");
+    printf("  > Use \"-t <CPU NUM>\" when pinning threads to specific CPUs.\n");
+}
 
 // 10周アクセスして，キャッシュに乗せる
 void warm_up(void *cookie, size_t list_len) {
@@ -325,107 +341,159 @@ int create_directory(const char *path) {
     return 0;
 }
 
+int compare_desc(const void *a, const void *b) {
+    int va = *(const int*)a;
+    int vb = *(const int*)b;
+    return vb - va;
+}
+
+int* extract_cpunum(char* cpu_src){
+    int* extracted = malloc(sizeof(int) * MAX_CPU_NUM);
+    char *token = strtok(cpu_src, ",");
+
+    thread_cpu_num = 0;
+    while (token != NULL) {
+        if (thread_cpu_num > MAX_CPU_NUM - 1) {
+            printf("ERR: Too many cpus to set. (MAX_CPU_NUM: %d)\n", MAX_CPU_NUM);
+            exit(1);
+        }
+        extracted[thread_cpu_num] = atoi(token);
+        token = strtok(NULL, ",");
+        thread_cpu_num++;
+    }
+
+    qsort(extracted, thread_cpu_num, sizeof(int), compare_desc);
+
+    return extracted;
+}
+
+void cg_taskset(pid_t pid, char* cpu_to_set){
+    int cpuset_value = 0;
+    int pid_check_cnt = 0;
+    FILE *cg_fp;
+
+    // Enable cpuset module at master
+    cg_fp = fopen("/sys/fs/cgroup/cgroup.subtree_control", "w");
+    if (!cg_fp) {
+        printf("ERR: Could not open the croup-v2 cpuset file. (%s)\n", "/sys/fs/cgroup/cgroup.subtree_control");
+        printf("> You may need sudo.\n");
+        exit(1);
+    }
+    fprintf(cg_fp, "%s", "+cpuset");
+    fclose(cg_fp);
+
+    // Create parent group
+    create_directory("/sys/fs/cgroup/sim_lmb");
+
+    // Enable cpuset module at parent group
+    cg_fp = fopen("/sys/fs/cgroup/sim_lmb/cgroup.subtree_control", "w");
+    if (!cg_fp) {
+        printf("ERR: Could not open the croup-v2 cpuset file. (%s)\n", "/sys/fs/cgroup/cgroup.subtree_control");
+        exit(1);
+    }
+    fprintf(cg_fp, "%s", "+cpuset");
+    fclose(cg_fp);
+
+    // Create sub group
+    create_directory("/sys/fs/cgroup/sim_lmb/pmu-sim-lat_mem_rd");
+
+    // Set CPU num 1 to cgroup config
+    cg_fp = fopen("/sys/fs/cgroup/sim_lmb/pmu-sim-lat_mem_rd/cpuset.cpus", "w");
+    if (!cg_fp) {
+        printf("ERR: Could not open the croup-v2 cpuset file. (%s)\n", "/sys/fs/cgroup/sim_lmb/pmu-sim-lat_mem_rd/cpuset.cpus");
+        exit(1);
+    }
+    fprintf(cg_fp, "%s", cpu_to_set);
+    fclose(cg_fp);
+
+    // Write PID to the  cpuset file
+    cg_fp = fopen("/sys/fs/cgroup/sim_lmb/pmu-sim-lat_mem_rd/cgroup.procs", "w");
+    if (!cg_fp) {
+        printf("ERR: Could not open the croup-v2 cpuset file. (\"pmu-sim-lat_mem_rd\" group)\n");
+        exit(1);
+    }
+    fprintf(cg_fp, "%d\n", pid);
+    fclose(cg_fp);
+
+    // Read an integer from the file
+    do {
+        cg_fp = fopen("/sys/fs/cgroup/sim_lmb/pmu-sim-lat_mem_rd/cgroup.procs", "r");
+        if (!cg_fp) {
+            printf("ERR: Could not open the croup-v2 cpuset file. (\"pmu-sim-lat_mem_rd\" group)\n");
+            exit(1);
+        }
+
+        int fscan_res = fscanf(cg_fp, "%d", &cpuset_value);
+        (void)fscan_res;
+        fclose(cg_fp);
+        usleep(100*1000);   // sleep 0.1s
+        
+        // 2s check
+        if (pid_check_cnt == 20) {
+            printf("ERR: Could not set PID to the cpuset setting. (\"pmu-sim-lat_mem_rd\" group)\n");
+            exit(1);
+        }
+        pid_check_cnt++;
+    } while (cpuset_value != pid);
+}
+
+void cpu_set_all(cpu_set_t* cpu_set, int* cpus_num) {
+    int cnt = 0;
+
+    while(cnt < thread_cpu_num) {
+        CPU_SET(cpus_num[cnt], cpu_set);
+        cnt++;
+    }
+}
+
 int main(int argc, char* argv[]) {
     size_t max_work_size;
     uint64_t stride;
-
-    char *endptr;
-    FILE *cg_fp;
-	char* cpu_to_set = NULL;
-	int cpuset_value = 0;
-    int pid_check_cnt = 0;
+	char* ch_cpu_to_set = NULL;
     pid_t pid = getpid();
+    cpu_set_t cpu_set;
+    int ts_result;
 
     if (argc != 3 && argc != 5) {
-        printf("arg[1]: Max buffer size\n");
-        printf("  > Use 5GB if it is 0.\n");
-        printf("arg[2]: Stride\n");
-        printf("  > Use 2048KB if it is 0.\n");
-        printf("arg[3 or more]: Use OneShot (Optional)\n");
-        printf("  > Use \"-t <CPU NUM>\" when using cgroup-taskset(cpuset)\n");
+        error_print();
         return 1;
     }
 
-    if (argc == 5 && strcmp(argv[3], "-t") == 0) {
-        use_taskset = true;
-        target_cpu = strtoull(argv[4], &endptr, 10);
-        cpu_to_set = argv[4];
+    if (argc < 3) {
+		error_print();
+        return 1;
     }
-    else {
-        printf("ERR: Unknown argument(%s).\n", argv[3]);
-    }
-
-    // cgroup taskset (cpuset)
-    if (use_taskset) {
-        // Enable cpuset module at master
-        cg_fp = fopen("/sys/fs/cgroup/cgroup.subtree_control", "w");
-        if (!cg_fp) {
-            printf("ERR: Could not open the croup_cpuset file. (%s)\n", "/sys/fs/cgroup/cgroup.subtree_control");
-            return 1;
-        }
-        fprintf(cg_fp, "%s", "+cpuset");
-        fclose(cg_fp);
-
-        // Create parent group
-        create_directory("/sys/fs/cgroup/Example");
-
-        // Enable cpuset module at parent group
-        cg_fp = fopen("/sys/fs/cgroup/Example/cgroup.subtree_control", "w");
-        if (!cg_fp) {
-            printf("ERR: Could not open the croup_cpuset file. (%s)\n", "/sys/fs/cgroup/cgroup.subtree_control");
-            return 1;
-        }
-        fprintf(cg_fp, "%s", "+cpuset");
-        fclose(cg_fp);
-
-        // Create sub group
-        create_directory("/sys/fs/cgroup/Example/pmu-sim-lat_mem_rd");
-
-        // Set CPU num 1 to cgroup config
-        cg_fp = fopen("/sys/fs/cgroup/Example/pmu-sim-lat_mem_rd/cpuset.cpus", "w");
-        if (!cg_fp) {
-            printf("ERR: Could not open the croup_cpuset file. (%s)\n", "/sys/fs/cgroup/Example/pmu-sim-lat_mem_rd/cpuset.cpus");
-            return 1;
-        }
-        fprintf(cg_fp, "%s", cpu_to_set);
-        fclose(cg_fp);
-
-        // Write PID to the  cpuset file
-        cg_fp = fopen("/sys/fs/cgroup/Example/pmu-sim-lat_mem_rd/cgroup.procs", "w");
-        if (!cg_fp) {
-            printf("ERR: Could not open the croup_cpuset file. (\"pmu-sim-lat_mem_rd\" group)\n");
-            return 1;
-        }
-        fprintf(cg_fp, "%d\n", pid);
-        fclose(cg_fp);
-
-        // Read an integer from the file
-        do {
-            cg_fp = fopen("/sys/fs/cgroup/Example/pmu-sim-lat_mem_rd/cgroup.procs", "r");
-            if (!cg_fp) {
-                printf("ERR: Could not open the croup_cpuset file. (\"pmu-sim-lat_mem_rd\" group)\n");
-                fclose(cg_fp);
-                return 1;
-            }
-
-            int fscan_res = fscanf(cg_fp, "%d", &cpuset_value);
-            (void)fscan_res;
-            fclose(cg_fp);
-            //printf("PID: %d, FILE: %d!!\n", pid, cpuset_value);
-            usleep(100*1000);   // sleep 0.1s
-            
-            // 2s check
-            if (pid_check_cnt == 20) {
-                printf("ERR: Could not set PID to the cpuset setting. (\"pmu-sim-lat_mem_rd\" group)\n");
-                return 1;
-            }
-            pid_check_cnt++;
-        } while (cpuset_value != pid);
-    }
-
-    // ワークサイズ・strideを設定 (ステップ実行時には設定内容を出力)
+    
     max_work_size = (size_t)parse_size(argv[1]);
     stride = parse_size(argv[2]);
+
+    argc -= 3;
+    for (int awc = 0; awc < argc; awc+=2) {        
+        switch (argv[awc+3][1]) {
+            case 'g':
+                use_cg_taskset = true;
+                ch_cpu_to_set = argv[(awc+3)+1];
+                cpus_to_set = extract_cpunum(ch_cpu_to_set);
+                target_cpu = cpus_to_set[0];
+                break;
+            case 't':
+                use_threadset = true;
+                ch_cpu_to_set = argv[(awc+3)+1];
+                cpus_to_set = extract_cpunum(ch_cpu_to_set);
+                target_cpu = cpus_to_set[0];
+                break;
+            default:
+                printf("ERR: Unknown argument. (%s)\n\n", argv[awc+3]);
+                error_print();
+                return 1;
+        }
+    }
+
+    if (use_threadset && use_cg_taskset) {
+        printf("ERR: The -g option and the -t option cannot be used together.\n\n");
+        error_print();
+        exit(1);
+    }
 
     if (max_work_size == 0) {
         max_work_size = 5 * 1024 * 1024;    // デフォルト5MB
@@ -446,6 +514,20 @@ int main(int argc, char* argv[]) {
     }
     else {
         //pass
+    }
+
+    if (use_threadset) {
+        CPU_ZERO(&cpu_set);
+        cpu_set_all(&cpu_set, cpus_to_set);
+        ts_result = sched_setaffinity(pid, sizeof(cpu_set_t), &cpu_set);
+        if (ts_result != 0) {
+            printf("WARN: Failed to set cpu affinity.\n");
+        }
+    }
+
+    // cgroup taskset (cpuset)
+    if (use_cg_taskset) {
+        cg_taskset(pid, ch_cpu_to_set);
     }
 
     fflush(stdout);
