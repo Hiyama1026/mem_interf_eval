@@ -388,6 +388,7 @@ void cg_taskset(pid_t pid, char* cpu_to_set){
     cg_fp = fopen("/sys/fs/cgroup/cgroup.subtree_control", "w");
     if (!cg_fp) {
         printf("ERR: Could not open the croup-v2 cpuset file. (%s)\n", "/sys/fs/cgroup/cgroup.subtree_control");
+        printf("> You may need sudo.\n");
         exit(1);
     }
     fprintf(cg_fp, "%s", "+cpuset");

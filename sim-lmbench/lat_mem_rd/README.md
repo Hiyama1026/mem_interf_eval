@@ -97,11 +97,11 @@
     - ``$ make pmu-sim-lat_mem_rd`` でも可
         - Makefile内の``pmu_counter.c``までのパスは適宜合わせること
 - 実行方法
-    - 方法1：``-t``オプションでベンチの実行コアを指定して実行する
+    - 方法1：``-t``または``-g``オプションでベンチの実行コアを指定して実行する
         - ``pmu_counter.c``の仕様に合わせて``create_six_event_group()``や``export_and_clean_counter()``の設定を行う
         - ``$ sudo ./pmu-sim-lat_mem_rd <BUFFER SIZE> <STRIDE> -t <CPU NUM>`` で実行する
-            - -tオプションを使用する場合はPMUの計測対象のコアも指定したコアになる
-            - cgroupのcpusetを使用してコア固定を行うため，sudo実行が必要な場合がある
+            - -t・-gオプションを使用する場合はPMUの計測対象のコアも指定したコアになる
+            - -gはcgroup-vのcpusetを使用してコア固定を行うため，sudo実行が必要な場合がある
     - 方法2：``taskset``コマンドなど，外部コマンドによりベンチの実行コアを指定して実行する
         - ``pmu_counter.c``の仕様に合わせて``create_six_event_group()``や``export_and_clean_counter()``の設定を行う
         - ``taskset -c <CPU NUM> ./pmu-sim-lat_mem_rd <BUFFER SIZE> <STRIDE>`` などで実行する
