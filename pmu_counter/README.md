@@ -75,10 +75,3 @@ stop_counter();                 // PMUカウンタ停止
 export_and_clean_counter("L2D_CACHE_WB", "BUS_ACCESS", "MEMORY_ERROR", 
                         "INST_SPEC", "TTBR_WRITE_RETIRED", "BUS_CYCLES");
 ```
-
-# calculate_clpartcr.c
-- gccでコンパイルして使用する
-    - ``$ gcc -o calculate_clpartcr calculate_clpartcr.c``
-- DSUによるWAYパーティショニングをする際にCLUSTERPARTCRレジスタに書き込む値を計算する
-- 実行したら各WAYに割り付けるCPUクラスタIDを入力する
-- CLUSTERPARTCRレジスタに書き込む値が16進数で表示される
