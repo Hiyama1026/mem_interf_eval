@@ -1,0 +1,875 @@
+diff -ruN cortexsuite/cortex/clustering/kmeans/includes/timingUtils.h cortexsuite_arm/cortex/clustering/kmeans/includes/timingUtils.h
+--- cortexsuite/cortex/clustering/kmeans/includes/timingUtils.h	2025-09-09 03:07:01.834617187 +0900
++++ cortexsuite_arm/cortex/clustering/kmeans/includes/timingUtils.h	2025-09-09 03:05:12.088296759 +0900
+@@ -1,6 +1,9 @@
+ 
+ #define magic_timing_begin(cycleLo, cycleHi) {\
+-    asm volatile( "rdtsc": "=a" (cycleLo), "=d" (cycleHi)); \
++    unsigned long long  value; \
++    asm("isb \n mrs %0, CNTVCT_EL0" : "=r"(value)); \
++    cycleLo = (unsigned int) value; \
++    cycleHi = (unsigned int) (value >> 32); \
+ }\
+ 
+ #define magic_timing_end(cycleLo, cycleHi) {\
+diff -ruN cortexsuite/cortex/clustering/spectral/includes/timingUtils.h cortexsuite_arm/cortex/clustering/spectral/includes/timingUtils.h
+--- cortexsuite/cortex/clustering/spectral/includes/timingUtils.h	2025-09-09 03:07:01.835028437 +0900
++++ cortexsuite_arm/cortex/clustering/spectral/includes/timingUtils.h	2025-09-09 03:05:12.089168259 +0900
+@@ -1,6 +1,9 @@
+ 
+ #define magic_timing_begin(cycleLo, cycleHi) {\
+-    asm volatile( "rdtsc": "=a" (cycleLo), "=d" (cycleHi)); \
++    unsigned long long  value; \
++    asm("isb \n mrs %0, CNTVCT_EL0" : "=r"(value)); \
++    cycleLo = (unsigned int) value; \
++    cycleHi = (unsigned int) (value >> 32); \
+ }\
+ 
+ #define magic_timing_end(cycleLo, cycleHi) {\
+diff -ruN cortexsuite/cortex/clustering/spectral/spectral.c cortexsuite_arm/cortex/clustering/spectral/spectral.c
+--- cortexsuite/cortex/clustering/spectral/spectral.c	2025-09-09 03:07:01.835028437 +0900
++++ cortexsuite_arm/cortex/clustering/spectral/spectral.c	2025-09-09 03:05:12.092568968 +0900
+@@ -6,6 +6,7 @@
+ #include "photonTiming.h"
+ 
+ int *k_means(double **data, int n, int m, int k, double t, double **centroids);
++void eigen(double *a,double *ev,int n);
+ 
+ double SIGMA = 0.1;
+ double DIV_FACTOR = 500;
+diff -ruN cortexsuite/cortex/lda/includes/timingUtils.h cortexsuite_arm/cortex/lda/includes/timingUtils.h
+--- cortexsuite/cortex/lda/includes/timingUtils.h	2025-09-09 03:07:02.111690103 +0900
++++ cortexsuite_arm/cortex/lda/includes/timingUtils.h	2025-09-09 03:05:12.093311259 +0900
+@@ -1,6 +1,9 @@
+ 
+ #define magic_timing_begin(cycleLo, cycleHi) {\
+-    asm volatile( "rdtsc": "=a" (cycleLo), "=d" (cycleHi)); \
++    unsigned long long  value; \
++    asm("isb \n mrs %0, CNTVCT_EL0" : "=r"(value)); \
++    cycleLo = (unsigned int) value; \
++    cycleHi = (unsigned int) (value >> 32); \
+ }\
+ 
+ #define magic_timing_end(cycleLo, cycleHi) {\
+diff -ruN cortexsuite/cortex/lda/lda-inference.c cortexsuite_arm/cortex/lda/lda-inference.c
+--- cortexsuite/cortex/lda/lda-inference.c	2025-09-09 03:07:02.183406395 +0900
++++ cortexsuite_arm/cortex/lda/lda-inference.c	2025-09-09 03:05:12.093987051 +0900
+@@ -19,6 +19,10 @@
+ 
+ #include "lda-inference.h"
+ 
++// 多重定義エラー防止
++int VAR_MAX_ITER;
++float VAR_CONVERGED;
++
+ /*
+  * variational inference
+  *
+diff -ruN cortexsuite/cortex/lda/lda-inference.h cortexsuite_arm/cortex/lda/lda-inference.h
+--- cortexsuite/cortex/lda/lda-inference.h	2025-09-09 03:07:02.183406395 +0900
++++ cortexsuite_arm/cortex/lda/lda-inference.h	2025-09-09 03:05:12.094535093 +0900
+@@ -7,8 +7,10 @@
+ #include "lda.h"
+ #include "utils.h"
+ 
+-float VAR_CONVERGED;
+-int VAR_MAX_ITER;
++//float VAR_CONVERGED;
++extern float VAR_CONVERGED;
++//int VAR_MAX_ITER;
++extern int VAR_MAX_ITER;
+ 
+ double lda_inference(document*, lda_model*, double*, double**);
+ double compute_likelihood(document*, lda_model*, double**, double*);
+diff -ruN cortexsuite/cortex/liblinear/includes/timingUtils.h cortexsuite_arm/cortex/liblinear/includes/timingUtils.h
+--- cortexsuite/cortex/liblinear/includes/timingUtils.h	2025-09-09 03:07:03.881329146 +0900
++++ cortexsuite_arm/cortex/liblinear/includes/timingUtils.h	2025-09-09 03:05:12.095212343 +0900
+@@ -1,6 +1,9 @@
+ 
+ #define magic_timing_begin(cycleLo, cycleHi) {\
+-    asm volatile( "rdtsc": "=a" (cycleLo), "=d" (cycleHi)); \
++    unsigned long long  value; \
++    asm("isb \n mrs %0, CNTVCT_EL0" : "=r"(value)); \
++    cycleLo = (unsigned int) value; \
++    cycleHi = (unsigned int) (value >> 32); \
+ }\
+ 
+ #define magic_timing_end(cycleLo, cycleHi) {\
+diff -ruN cortexsuite/cortex/liblinear/linear.c cortexsuite_arm/cortex/liblinear/linear.c
+--- cortexsuite/cortex/liblinear/linear.c	2025-09-09 03:07:03.881329146 +0900
++++ cortexsuite_arm/cortex/liblinear/linear.c	2025-09-09 03:05:12.096570051 +0900
+@@ -2342,6 +2342,11 @@
+ 	for(i=1; i<n+1; i++)
+ 		col_ptr[i] += col_ptr[i-1] + 1;
+ 
++	// エラーチェックで警告回避
++	if (nnz < 0 || n < 0) {
++		printf("Error: size of malloc.\n");
++		exit(1);
++	}
+ 	x_space = (struct feature_node*)malloc((nnz+n)*sizeof(struct feature_node));
+ 	for(i=0; i<n; i++)
+ 		prob_col->x[i] = &x_space[col_ptr[i]];
+diff -ruN cortexsuite/cortex/liblinear/tron.c cortexsuite_arm/cortex/liblinear/tron.c
+--- cortexsuite/cortex/liblinear/tron.c	2025-09-09 03:07:03.881406396 +0900
++++ cortexsuite_arm/cortex/liblinear/tron.c	2025-09-09 03:05:12.098031593 +0900
+@@ -23,6 +23,11 @@
+ extern int daxpy_(int *, double *, double *, int *, double *, int *);
+ extern int dscal_(int *, double *, double *, int *);
+ 
++// 警告回避用
++struct tagl2r_lr_fun;
++struct tagl2r_l2_svc_fun;
++struct tagl2r_l2_svr_fun;
++
+ #ifdef __cplusplus
+ }
+ #endif
+diff -ruN cortexsuite/cortex/liblinear/tron.h cortexsuite_arm/cortex/liblinear/tron.h
+--- cortexsuite/cortex/liblinear/tron.h	2025-09-09 03:07:03.881406396 +0900
++++ cortexsuite_arm/cortex/liblinear/tron.h	2025-09-09 03:05:12.099467343 +0900
+@@ -1,6 +1,11 @@
+ #ifndef _TRON_H
+ #define _TRON_H
+ 
++// 警告回避用
++struct tagl2r_lr_fun;
++struct tagl2r_l2_svc_fun;
++struct tagl2r_l2_svr_fun;
++
+ //TRON for l2r_lr_fun
+ typedef struct tagTRON_l2r_lr TRON_l2r_lr;
+ struct tagTRON_l2r_lr
+diff -ruN cortexsuite/cortex/motion-estimation/includes/timingUtils.h cortexsuite_arm/cortex/motion-estimation/includes/timingUtils.h
+--- cortexsuite/cortex/motion-estimation/includes/timingUtils.h	2025-09-09 03:07:04.522526563 +0900
++++ cortexsuite_arm/cortex/motion-estimation/includes/timingUtils.h	2025-09-09 03:05:12.107515009 +0900
+@@ -1,6 +1,9 @@
+ 
+ #define magic_timing_begin(cycleLo, cycleHi) {\
+-    asm volatile( "rdtsc": "=a" (cycleLo), "=d" (cycleHi)); \
++    unsigned long long  value; \
++    asm("isb \n mrs %0, CNTVCT_EL0" : "=r"(value)); \
++    cycleLo = (unsigned int) value; \
++    cycleHi = (unsigned int) (value >> 32); \
+ }\
+ 
+ #define magic_timing_end(cycleLo, cycleHi) {\
+diff -ruN cortexsuite/cortex/pca/includes/timingUtils.h cortexsuite_arm/cortex/pca/includes/timingUtils.h
+--- cortexsuite/cortex/pca/includes/timingUtils.h	2025-09-09 03:07:04.522725771 +0900
++++ cortexsuite_arm/cortex/pca/includes/timingUtils.h	2025-09-09 03:05:12.108271593 +0900
+@@ -1,6 +1,9 @@
+ 
+ #define magic_timing_begin(cycleLo, cycleHi) {\
+-    asm volatile( "rdtsc": "=a" (cycleLo), "=d" (cycleHi)); \
++    unsigned long long  value; \
++    asm("isb \n mrs %0, CNTVCT_EL0" : "=r"(value)); \
++    cycleLo = (unsigned int) value; \
++    cycleHi = (unsigned int) (value >> 32); \
+ }\
+ 
+ #define magic_timing_end(cycleLo, cycleHi) {\
+diff -ruN cortexsuite/cortex/pca/pca.c cortexsuite_arm/cortex/pca/pca.c
+--- cortexsuite/cortex/pca/pca.c	2025-09-09 03:07:04.583406396 +0900
++++ cortexsuite_arm/cortex/pca/pca.c	2025-09-09 03:05:36.299406354 +0900
+@@ -34,9 +34,9 @@
+ {
+ FILE *stream;
+ int  n, m,  i, j, k, k2;
+-float **data, **matrix(), **symmat, **symmat2, *vector(), *evals, *interm;
+-void free_matrix(), free_vector(), corcol(), covcol(), scpcol();
+-void tred2(), tqli();
++float **data, **matrix(int n, int m), **symmat, **symmat2, *vector(int m), *evals, *interm;
++void free_matrix(float **data, int n, int m), free_vector(float *evals, int m), corcol(float **data, int n, int m, float **symmat), covcol(float **data, int n, int m, float **symmat), scpcol(float **data, int n, int m, float **symmat);
++void tred2(float **symmat, int m, float *evals, float *interm), tqli(float *evals, float *interm, int m, float **symmat);
+ float in_value;
+ char option;
+ 
+@@ -252,7 +252,7 @@
+ /* Create m * m correlation matrix from given n * m data matrix. */
+ {
+ float eps = 0.005;
+-float x, *mean, *stddev, *vector();
++float x, *mean, *stddev, *vector(int m);
+ int i, j, j1, j2;
+ 
+ /* Allocate storage for mean and std. dev. vectors */
+@@ -338,7 +338,7 @@
+ int n, m;
+ /* Create m * m covariance matrix from given n * m data matrix. */
+ {
+-float *mean, *vector();
++float *mean, *vector(int m);
+ int i, j, j1, j2;
+ 
+ /* Allocate storage for mean vector */
+@@ -419,9 +419,9 @@
+ 
+ /**  Error handler  **************************************************/
+ 
+-void erhand(err_msg)
+-char err_msg[];
+ /* Error handler */
++char err_msg[];
++void erhand(char *err_msg)
+ {
+     fprintf(stderr,"Run-time error:\n");
+     fprintf(stderr,"%s\n", err_msg);
+@@ -592,7 +592,7 @@
+ {
+ int m, l, iter, i, k;
+ float s, r, p, g, f, dd, c, b;
+-void erhand();
++void erhand(char *err_msg);
+ 
+ for (i = 2; i <= n; i++)
+     e[i-1] = e[i];
+@@ -652,3 +652,4 @@
+           }  while (m != l);
+       }
+  }
++
+diff -ruN cortexsuite/cortex/rbm/includes/timingUtils.h cortexsuite_arm/cortex/rbm/includes/timingUtils.h
+--- cortexsuite/cortex/rbm/includes/timingUtils.h	2025-09-09 03:07:04.589437896 +0900
++++ cortexsuite_arm/cortex/rbm/includes/timingUtils.h	2025-09-09 03:05:12.109950634 +0900
+@@ -1,6 +1,9 @@
+ 
+ #define magic_timing_begin(cycleLo, cycleHi) {\
+-    asm volatile( "rdtsc": "=a" (cycleLo), "=d" (cycleHi)); \
++    unsigned long long  value; \
++    asm("isb \n mrs %0, CNTVCT_EL0" : "=r"(value)); \
++    cycleLo = (unsigned int) value; \
++    cycleHi = (unsigned int) (value >> 32); \
+ }\
+ 
+ #define magic_timing_end(cycleLo, cycleHi) {\
+diff -ruN cortexsuite/cortex/sphinx/includes/timingUtils.h cortexsuite_arm/cortex/sphinx/includes/timingUtils.h
+--- cortexsuite/cortex/sphinx/includes/timingUtils.h	2025-09-09 03:07:04.596471313 +0900
++++ cortexsuite_arm/cortex/sphinx/includes/timingUtils.h	2025-09-09 03:05:12.111290551 +0900
+@@ -1,6 +1,9 @@
+ 
+ #define magic_timing_begin(cycleLo, cycleHi) {\
+-    asm volatile( "rdtsc": "=a" (cycleLo), "=d" (cycleHi)); \
++    unsigned long long  value; \
++    asm("isb \n mrs %0, CNTVCT_EL0" : "=r"(value)); \
++    cycleLo = (unsigned int) value; \
++    cycleHi = (unsigned int) (value >> 32); \
+ }\
+ 
+ #define magic_timing_end(cycleLo, cycleHi) {\
+diff -ruN cortexsuite/cortex/srr/includes/timingUtils.h cortexsuite_arm/cortex/srr/includes/timingUtils.h
+--- cortexsuite/cortex/srr/includes/timingUtils.h	2025-09-09 03:07:06.243656980 +0900
++++ cortexsuite_arm/cortex/srr/includes/timingUtils.h	2025-09-09 03:05:12.111888884 +0900
+@@ -1,6 +1,9 @@
+ 
+ #define magic_timing_begin(cycleLo, cycleHi) {\
+-    asm volatile( "rdtsc": "=a" (cycleLo), "=d" (cycleHi)); \
++    unsigned long long  value; \
++    asm("isb \n mrs %0, CNTVCT_EL0" : "=r"(value)); \
++    cycleLo = (unsigned int) value; \
++    cycleHi = (unsigned int) (value >> 32); \
+ }\
+ 
+ #define magic_timing_end(cycleLo, cycleHi) {\
+diff -ruN cortexsuite/cortex/svd3/includes/timingUtils.h cortexsuite_arm/cortex/svd3/includes/timingUtils.h
+--- cortexsuite/cortex/svd3/includes/timingUtils.h	2025-09-09 03:07:06.266036647 +0900
++++ cortexsuite_arm/cortex/svd3/includes/timingUtils.h	2025-09-09 03:05:12.112536676 +0900
+@@ -1,6 +1,9 @@
+ 
+ #define magic_timing_begin(cycleLo, cycleHi) {\
+-    asm volatile( "rdtsc": "=a" (cycleLo), "=d" (cycleHi)); \
++    unsigned long long  value; \
++    asm("isb \n mrs %0, CNTVCT_EL0" : "=r"(value)); \
++    cycleLo = (unsigned int) value; \
++    cycleHi = (unsigned int) (value >> 32); \
+ }\
+ 
+ #define magic_timing_end(cycleLo, cycleHi) {\
+diff -ruN cortexsuite/vision/benchmarks/texture_synthesis/src/c/script_texture_synthesis.c cortexsuite_arm/vision/benchmarks/texture_synthesis/src/c/script_texture_synthesis.c
+--- cortexsuite/vision/benchmarks/texture_synthesis/src/c/script_texture_synthesis.c	2025-09-09 03:07:08.765406398 +0900
++++ cortexsuite_arm/vision/benchmarks/texture_synthesis/src/c/script_texture_synthesis.c	2025-09-09 03:05:12.113186509 +0900
+@@ -5,12 +5,12 @@
+ #include "texture.h"
+ 
+ int WIDTHin,HEIGHTin;
+-F2D *target, *result;
++//F2D *target, *result;
+ int WIDTH,HEIGHT;
+ int localx, localy,targetin=0;
+-int *atlas;
+-int *xloopin, *yloopin;
+-int *xloopout, *yloopout;
++//int *atlas;
++//int *xloopin, *yloopin;
++//int *xloopout, *yloopout;
+ 
+ int  main(int argc, char **argv)
+ {
+diff -ruN cortexsuite/vision/benchmarks/texture_synthesis/src/c/texture.h cortexsuite_arm/vision/benchmarks/texture_synthesis/src/c/texture.h
+--- cortexsuite/vision/benchmarks/texture_synthesis/src/c/texture.h	2025-09-09 03:07:08.765974190 +0900
++++ cortexsuite_arm/vision/benchmarks/texture_synthesis/src/c/texture.h	2025-09-09 03:05:12.114292509 +0900
+@@ -1,11 +1,14 @@
+ /********************************
+ Author: Sravanthi Kota Venkata
+ ********************************/
+-
+ #ifndef _TEXTURE_
+ #define _TEXTURE_
+ 
+ #include "sdvbs_common.h"
++extern int *xloopin, *yloopin;
++extern int *xloopout, *yloopout;
++extern F2D *target, *result;
++extern int *atlas;
+ 
+ #define R 0
+ #define G 1
+@@ -29,7 +32,7 @@
+  int nfin, nfout;
+ }params;
+ 
+-void *SIGNATURES;
++//void *SIGNATURES;
+ 
+ //void create_texture(F2D *image, F2D *result, params *data);
+ void create_texture(F2D *image, params *data);
+@@ -43,6 +46,3 @@
+ int create_all_candidates(int x,int y, params* data);
+ 
+ #endif
+-
+-
+-
+diff -ruN cortexsuite/vision/common/c/fSelfCheck.c cortexsuite_arm/vision/common/c/fSelfCheck.c
+--- cortexsuite/vision/common/c/fSelfCheck.c	2025-09-09 03:07:09.942406399 +0900
++++ cortexsuite_arm/vision/common/c/fSelfCheck.c	2025-09-09 03:05:12.115114718 +0900
+@@ -11,6 +11,7 @@
+     FILE* fd;
+     int count=0, i, j;
+     char file[256];
++    int result = 0;
+     
+     r1 = in1->height;
+     c1 = in1->width;
+@@ -28,11 +29,16 @@
+    
+     while(!feof(fd))
+     {
+-        fscanf(fd, "%f", &buffer[count]);
++        result = fscanf(fd, "%f", &buffer[count]);
+         count++;
+     }
+     count--;
+ 
++    // To avoid triggering a warning
++    if (result != 1) {
++        result += 1;
++    }
++
+     if(count != (r1*c1))
+     {
+         printf("Checking error: dimensions mismatch. Expected = %d, Observed = %d \n", count, (r1*c1));
+diff -ruN cortexsuite/vision/common/c/readFile.c cortexsuite_arm/vision/common/c/readFile.c
+--- cortexsuite/vision/common/c/readFile.c	2025-09-09 03:07:09.943406399 +0900
++++ cortexsuite_arm/vision/common/c/readFile.c	2025-09-09 03:05:12.115609968 +0900
+@@ -11,6 +11,7 @@
+     float temp;
+     int rows, cols;
+     int i, j;
++    int result = 0;
+ 
+     fp = fopen(fileName, "r");
+     if(fp == NULL)
+@@ -19,8 +20,8 @@
+         return NULL;
+     }
+ 
+-    fscanf(fp, "%d", &cols);
+-    fscanf(fp, "%d", &rows);
++    result |= fscanf(fp, "%d", &cols);
++    result |= fscanf(fp, "%d", &rows);
+ 
+     fill = fSetArray(rows, cols, 0);
+ 
+@@ -28,10 +29,15 @@
+     {
+         for(j=0; j<cols; j++)
+         {
+-            fscanf(fp, "%f", &(subsref(fill,i,j)) );
++            result |= fscanf(fp, "%f", &(subsref(fill,i,j)) );
+         }
+     }
+ 
++    // To avoid triggering a warning
++    if (result != 1) {
++        result += 1;
++    }
++
+     fclose(fp);    
+     return fill;
+ }
+diff -ruN cortexsuite/vision/common/c/readImage.c cortexsuite_arm/vision/common/c/readImage.c
+--- cortexsuite/vision/common/c/readImage.c	2025-09-09 03:07:09.943406399 +0900
++++ cortexsuite_arm/vision/common/c/readImage.c	2025-09-09 03:05:12.116353134 +0900
+@@ -30,6 +30,7 @@
+ 
+     int nI,nJ;
+     int pixSize;
++    int result = 0;
+ 
+     unsigned char tempb,tempg,tempr,tempjunk[12];
+     int ta;
+@@ -45,24 +46,25 @@
+     else
+     {
+         //start of header information
+-        fread(&signature,sizeof(signature),1,input);
+-        fread(&file_size,sizeof(file_size),1,input);
+-        fread(&reserved1,sizeof(reserved1),1,input);
+-        fread(&reserved2,sizeof(reserved2),1,input);
+-        fread(&loc_of_bitmap,sizeof(loc_of_bitmap),1,input);
+-
+-        fread(&size_of_infoheader,sizeof(size_of_infoheader),1,input);
+-        fread(&width,sizeof(width),1,input); // Reads the width of the image
+-        fread(&height,sizeof(height),1,input); // Reads the height of the image
+-        fread(&number_of_planes,sizeof(number_of_planes),1,input);
+-        fread(&bits_per_pixel,sizeof(bits_per_pixel),1,input);
+-        fread(&compression_method,sizeof(compression_method),1,input);
+-        fread(&bytes_of_bitmap,sizeof(bytes_of_bitmap),1,input);
+-
+-        fread(&hori_reso,sizeof(hori_reso),1,input);
+-        fread(&vert_reso,sizeof(vert_reso),1,input);
+-        fread(&no_of_colors,sizeof(no_of_colors),1,input);
+-        fread(&no_of_imp_colors,sizeof(no_of_imp_colors),1,input);
++        result |= fread(&signature,sizeof(signature),1,input);
++        result |= fread(&file_size,sizeof(file_size),1,input);
++        result |= fread(&reserved1,sizeof(reserved1),1,input);
++        result |= fread(&reserved2,sizeof(reserved2),1,input);
++        result |= fread(&loc_of_bitmap,sizeof(loc_of_bitmap),1,input);
++
++        result |= fread(&size_of_infoheader,sizeof(size_of_infoheader),1,input);
++        result |= fread(&width,sizeof(width),1,input); // Reads the width of the image
++        result |= fread(&height,sizeof(height),1,input); // Reads the height of the image
++        result |= fread(&number_of_planes,sizeof(number_of_planes),1,input);
++        result |= fread(&bits_per_pixel,sizeof(bits_per_pixel),1,input);
++        result |= fread(&compression_method,sizeof(compression_method),1,input);
++        result |= fread(&bytes_of_bitmap,sizeof(bytes_of_bitmap),1,input);
++
++        result |= fread(&hori_reso,sizeof(hori_reso),1,input);
++        result |= fread(&vert_reso,sizeof(vert_reso),1,input);
++        result |= fread(&no_of_colors,sizeof(no_of_colors),1,input);
++        result |= fread(&no_of_imp_colors,sizeof(no_of_imp_colors),1,input);
++        
+         //end of header information
+ 
+         srcImage = iMallocHandle(height, width);
+@@ -81,7 +83,7 @@
+             {
+                 for(nJ = 0;nJ < width; nJ++)
+                 {
+-                    fread(&tempg,sizeof(unsigned char),1,input);
++                    result |= fread(&tempg,sizeof(unsigned char),1,input);
+                     subsref(srcImage,nI,nJ) = (int)tempg;
+                 }
+             }
+@@ -92,9 +94,9 @@
+             {
+                 for(nJ = 0;nJ < width; nJ++)
+                 {
+-                    fread(&tempb,sizeof(unsigned char),1,input);
+-                    fread(&tempg,sizeof(unsigned char),1,input);
+-                    fread(&tempr,sizeof(unsigned char),1,input);
++                    result |= fread(&tempb,sizeof(unsigned char),1,input);
++                    result |= fread(&tempg,sizeof(unsigned char),1,input);
++                    result |= fread(&tempr,sizeof(unsigned char),1,input);
+                     ta = (3*tempr + 6*tempg + tempb)/10;
+                     ta = tempg;
+                     subsref(srcImage,nI,nJ) = (int)ta;
+@@ -106,6 +108,11 @@
+             return NULL;
+         }
+ 
++        // To avoid triggering a warning
++    if (result != 1) {
++        result += 1;
++    }
++
+         fclose(input);
+         return srcImage;
+     }
+diff -ruN cortexsuite/vision/common/c/selfCheck.c cortexsuite_arm/vision/common/c/selfCheck.c
+--- cortexsuite/vision/common/c/selfCheck.c	2025-09-09 03:07:09.943406399 +0900
++++ cortexsuite_arm/vision/common/c/selfCheck.c	2025-09-09 03:05:12.120554759 +0900
+@@ -14,6 +14,7 @@
+     int count=0, *buffer, i, j;
+     char file[100];
+     int* data = in1->data;
++    int result = 0;
+     
+     r1 = in1->height;
+     c1 = in1->width;
+@@ -30,11 +31,16 @@
+    
+     while(!feof(fd))
+     {
+-        fscanf(fd, "%d", &buffer[count]);
++        result = fscanf(fd, "%d", &buffer[count]);
+         count++;
+     }
+     count--;
+-
++    
++    // To avoid triggering a warning
++    if (result != 1) {
++        result += 1;
++    }
++    
+     if(count < (r1*c1))
+     {
+         printf("Checking error: dimensions mismatch. Expected = %d, Observed = %d \n", count, (r1*c1));
+diff -ruN cortexsuite/vision/common/c/timingUtils.h cortexsuite_arm/vision/common/c/timingUtils.h
+--- cortexsuite/vision/common/c/timingUtils.h	2025-09-09 03:07:09.943406399 +0900
++++ cortexsuite_arm/vision/common/c/timingUtils.h	2025-09-09 03:05:12.121185343 +0900
+@@ -1,6 +1,9 @@
+ #ifdef GCC
+ #define magic_timing_begin(cycleLo, cycleHi) {\
+-    asm volatile( "rdtsc": "=a" (cycleLo), "=d" (cycleHi)); \
++    unsigned long long  value; \
++    asm("isb \n mrs %0, CNTVCT_EL0" : "=r"(value)); \
++    cycleLo = (unsigned int) value; \
++    cycleHi = (unsigned int) (value >> 32); \
+ }\
+ 
+ #define magic_timing_end(cycleLo, cycleHi) {\
+diff -ruN cortexsuite/vision/common/makefiles/Makefile.common cortexsuite_arm/vision/common/makefiles/Makefile.common
+--- cortexsuite/vision/common/makefiles/Makefile.common	2025-09-09 03:07:09.944406399 +0900
++++ cortexsuite_arm/vision/common/makefiles/Makefile.common	2025-09-09 03:05:12.121940759 +0900
+@@ -77,12 +77,12 @@
+ compile: $(C_SRC)
+ 	@echo 
+ 	@echo -e "Benchmark\t\t- $(BMARK)"
+-	@$(COMPILE_C) $(COMMON_SRC) $(C_SRC) -o $(BMARK)$(EXE)
++	@$(COMPILE_C) $(COMMON_SRC) $(C_SRC) -lm -o $(BMARK)$(EXE)
+ 
+ compile-prof: $(C_SRC)
+ 	@echo 
+ 	@echo -e "Benchmark\t\t- $(BMARK)"
+-	@$(COMPILE_PG) $(COMMON_SRC) $(C_SRC) -o $(BMARK)$(EXE)
++	@$(COMPILE_PG) $(COMMON_SRC) $(C_SRC) -lm -o $(BMARK)$(EXE)
+ 
+ matlab-run:
+ 	@echo 
+diff -ruN cortexsuite/vision/cycles/C_.txt cortexsuite_arm/vision/cycles/C_.txt
+--- cortexsuite/vision/cycles/C_.txt	1970-01-01 09:00:00.000000000 +0900
++++ cortexsuite_arm/vision/cycles/C_.txt	2025-09-09 03:05:12.123025884 +0900
+@@ -0,0 +1 @@
++
+diff -ruN cortexsuite/vision/cycles/disparity/C_cif.txt cortexsuite_arm/vision/cycles/disparity/C_cif.txt
+--- cortexsuite/vision/cycles/disparity/C_cif.txt	1970-01-01 09:00:00.000000000 +0900
++++ cortexsuite_arm/vision/cycles/disparity/C_cif.txt	2025-09-09 03:05:12.123450843 +0900
+@@ -0,0 +1 @@
++
+diff -ruN cortexsuite/vision/cycles/disparity/C_fullhd.txt cortexsuite_arm/vision/cycles/disparity/C_fullhd.txt
+--- cortexsuite/vision/cycles/disparity/C_fullhd.txt	1970-01-01 09:00:00.000000000 +0900
++++ cortexsuite_arm/vision/cycles/disparity/C_fullhd.txt	2025-09-09 03:05:12.123690593 +0900
+@@ -0,0 +1 @@
++
+diff -ruN cortexsuite/vision/cycles/disparity/C_qcif.txt cortexsuite_arm/vision/cycles/disparity/C_qcif.txt
+--- cortexsuite/vision/cycles/disparity/C_qcif.txt	1970-01-01 09:00:00.000000000 +0900
++++ cortexsuite_arm/vision/cycles/disparity/C_qcif.txt	2025-09-09 03:05:12.123992176 +0900
+@@ -0,0 +1 @@
++
+diff -ruN cortexsuite/vision/cycles/disparity/C_sim_fast.txt cortexsuite_arm/vision/cycles/disparity/C_sim_fast.txt
+--- cortexsuite/vision/cycles/disparity/C_sim_fast.txt	1970-01-01 09:00:00.000000000 +0900
++++ cortexsuite_arm/vision/cycles/disparity/C_sim_fast.txt	2025-09-09 03:05:12.124281801 +0900
+@@ -0,0 +1 @@
++
+diff -ruN cortexsuite/vision/cycles/disparity/C_sim.txt cortexsuite_arm/vision/cycles/disparity/C_sim.txt
+--- cortexsuite/vision/cycles/disparity/C_sim.txt	1970-01-01 09:00:00.000000000 +0900
++++ cortexsuite_arm/vision/cycles/disparity/C_sim.txt	2025-09-09 03:05:12.124530009 +0900
+@@ -0,0 +1 @@
++
+diff -ruN cortexsuite/vision/cycles/disparity/C_sqcif.txt cortexsuite_arm/vision/cycles/disparity/C_sqcif.txt
+--- cortexsuite/vision/cycles/disparity/C_sqcif.txt	1970-01-01 09:00:00.000000000 +0900
++++ cortexsuite_arm/vision/cycles/disparity/C_sqcif.txt	2025-09-09 03:05:12.124830718 +0900
+@@ -0,0 +1 @@
++
+diff -ruN cortexsuite/vision/cycles/disparity/C_test.txt cortexsuite_arm/vision/cycles/disparity/C_test.txt
+--- cortexsuite/vision/cycles/disparity/C_test.txt	1970-01-01 09:00:00.000000000 +0900
++++ cortexsuite_arm/vision/cycles/disparity/C_test.txt	2025-09-09 03:05:12.125083593 +0900
+@@ -0,0 +1 @@
++
+diff -ruN cortexsuite/vision/cycles/disparity/C_.txt cortexsuite_arm/vision/cycles/disparity/C_.txt
+--- cortexsuite/vision/cycles/disparity/C_.txt	1970-01-01 09:00:00.000000000 +0900
++++ cortexsuite_arm/vision/cycles/disparity/C_.txt	2025-09-09 03:05:12.125342593 +0900
+@@ -0,0 +1 @@
++
+diff -ruN cortexsuite/vision/cycles/disparity/C_vga.txt cortexsuite_arm/vision/cycles/disparity/C_vga.txt
+--- cortexsuite/vision/cycles/disparity/C_vga.txt	1970-01-01 09:00:00.000000000 +0900
++++ cortexsuite_arm/vision/cycles/disparity/C_vga.txt	2025-09-09 03:05:12.125593426 +0900
+@@ -0,0 +1 @@
++
+diff -ruN cortexsuite/vision/cycles/localization/C_cif.txt cortexsuite_arm/vision/cycles/localization/C_cif.txt
+--- cortexsuite/vision/cycles/localization/C_cif.txt	1970-01-01 09:00:00.000000000 +0900
++++ cortexsuite_arm/vision/cycles/localization/C_cif.txt	2025-09-09 03:05:12.126034134 +0900
+@@ -0,0 +1 @@
++
+diff -ruN cortexsuite/vision/cycles/localization/C_qcif.txt cortexsuite_arm/vision/cycles/localization/C_qcif.txt
+--- cortexsuite/vision/cycles/localization/C_qcif.txt	1970-01-01 09:00:00.000000000 +0900
++++ cortexsuite_arm/vision/cycles/localization/C_qcif.txt	2025-09-09 03:05:12.126232468 +0900
+@@ -0,0 +1 @@
++
+diff -ruN cortexsuite/vision/cycles/localization/C_sim_fast.txt cortexsuite_arm/vision/cycles/localization/C_sim_fast.txt
+--- cortexsuite/vision/cycles/localization/C_sim_fast.txt	1970-01-01 09:00:00.000000000 +0900
++++ cortexsuite_arm/vision/cycles/localization/C_sim_fast.txt	2025-09-09 03:05:12.126457634 +0900
+@@ -0,0 +1 @@
++
+diff -ruN cortexsuite/vision/cycles/localization/C_sim.txt cortexsuite_arm/vision/cycles/localization/C_sim.txt
+--- cortexsuite/vision/cycles/localization/C_sim.txt	1970-01-01 09:00:00.000000000 +0900
++++ cortexsuite_arm/vision/cycles/localization/C_sim.txt	2025-09-09 03:05:12.126685134 +0900
+@@ -0,0 +1 @@
++
+diff -ruN cortexsuite/vision/cycles/localization/C_sqcif.txt cortexsuite_arm/vision/cycles/localization/C_sqcif.txt
+--- cortexsuite/vision/cycles/localization/C_sqcif.txt	1970-01-01 09:00:00.000000000 +0900
++++ cortexsuite_arm/vision/cycles/localization/C_sqcif.txt	2025-09-09 03:05:12.126933634 +0900
+@@ -0,0 +1 @@
++
+diff -ruN cortexsuite/vision/cycles/localization/C_test.txt cortexsuite_arm/vision/cycles/localization/C_test.txt
+--- cortexsuite/vision/cycles/localization/C_test.txt	1970-01-01 09:00:00.000000000 +0900
++++ cortexsuite_arm/vision/cycles/localization/C_test.txt	2025-09-09 03:05:12.127163176 +0900
+@@ -0,0 +1 @@
++
+diff -ruN cortexsuite/vision/cycles/localization/C_vga.txt cortexsuite_arm/vision/cycles/localization/C_vga.txt
+--- cortexsuite/vision/cycles/localization/C_vga.txt	1970-01-01 09:00:00.000000000 +0900
++++ cortexsuite_arm/vision/cycles/localization/C_vga.txt	2025-09-09 03:05:12.127391551 +0900
+@@ -0,0 +1 @@
++
+diff -ruN cortexsuite/vision/cycles/mser/C_cif.txt cortexsuite_arm/vision/cycles/mser/C_cif.txt
+--- cortexsuite/vision/cycles/mser/C_cif.txt	1970-01-01 09:00:00.000000000 +0900
++++ cortexsuite_arm/vision/cycles/mser/C_cif.txt	2025-09-09 03:05:12.127767509 +0900
+@@ -0,0 +1 @@
++
+diff -ruN cortexsuite/vision/cycles/mser/C_fullhd.txt cortexsuite_arm/vision/cycles/mser/C_fullhd.txt
+--- cortexsuite/vision/cycles/mser/C_fullhd.txt	1970-01-01 09:00:00.000000000 +0900
++++ cortexsuite_arm/vision/cycles/mser/C_fullhd.txt	2025-09-09 03:05:12.127958551 +0900
+@@ -0,0 +1 @@
++
+diff -ruN cortexsuite/vision/cycles/mser/C_qcif.txt cortexsuite_arm/vision/cycles/mser/C_qcif.txt
+--- cortexsuite/vision/cycles/mser/C_qcif.txt	1970-01-01 09:00:00.000000000 +0900
++++ cortexsuite_arm/vision/cycles/mser/C_qcif.txt	2025-09-09 03:05:12.128184593 +0900
+@@ -0,0 +1 @@
++
+diff -ruN cortexsuite/vision/cycles/mser/C_sim_fast.txt cortexsuite_arm/vision/cycles/mser/C_sim_fast.txt
+--- cortexsuite/vision/cycles/mser/C_sim_fast.txt	1970-01-01 09:00:00.000000000 +0900
++++ cortexsuite_arm/vision/cycles/mser/C_sim_fast.txt	2025-09-09 03:05:12.128408884 +0900
+@@ -0,0 +1 @@
++
+diff -ruN cortexsuite/vision/cycles/mser/C_sim.txt cortexsuite_arm/vision/cycles/mser/C_sim.txt
+--- cortexsuite/vision/cycles/mser/C_sim.txt	1970-01-01 09:00:00.000000000 +0900
++++ cortexsuite_arm/vision/cycles/mser/C_sim.txt	2025-09-09 03:05:12.128632009 +0900
+@@ -0,0 +1 @@
++
+diff -ruN cortexsuite/vision/cycles/mser/C_sqcif.txt cortexsuite_arm/vision/cycles/mser/C_sqcif.txt
+--- cortexsuite/vision/cycles/mser/C_sqcif.txt	1970-01-01 09:00:00.000000000 +0900
++++ cortexsuite_arm/vision/cycles/mser/C_sqcif.txt	2025-09-09 03:05:12.128874676 +0900
+@@ -0,0 +1 @@
++
+diff -ruN cortexsuite/vision/cycles/mser/C_test.txt cortexsuite_arm/vision/cycles/mser/C_test.txt
+--- cortexsuite/vision/cycles/mser/C_test.txt	1970-01-01 09:00:00.000000000 +0900
++++ cortexsuite_arm/vision/cycles/mser/C_test.txt	2025-09-09 03:05:12.129100426 +0900
+@@ -0,0 +1 @@
++
+diff -ruN cortexsuite/vision/cycles/mser/C_vga.txt cortexsuite_arm/vision/cycles/mser/C_vga.txt
+--- cortexsuite/vision/cycles/mser/C_vga.txt	1970-01-01 09:00:00.000000000 +0900
++++ cortexsuite_arm/vision/cycles/mser/C_vga.txt	2025-09-09 03:05:12.129334634 +0900
+@@ -0,0 +1 @@
++
+diff -ruN cortexsuite/vision/cycles/sift/C_cif.txt cortexsuite_arm/vision/cycles/sift/C_cif.txt
+--- cortexsuite/vision/cycles/sift/C_cif.txt	1970-01-01 09:00:00.000000000 +0900
++++ cortexsuite_arm/vision/cycles/sift/C_cif.txt	2025-09-09 03:05:12.129694551 +0900
+@@ -0,0 +1 @@
++
+diff -ruN cortexsuite/vision/cycles/sift/C_fullhd.txt cortexsuite_arm/vision/cycles/sift/C_fullhd.txt
+--- cortexsuite/vision/cycles/sift/C_fullhd.txt	1970-01-01 09:00:00.000000000 +0900
++++ cortexsuite_arm/vision/cycles/sift/C_fullhd.txt	2025-09-09 03:05:12.129917384 +0900
+@@ -0,0 +1 @@
++
+diff -ruN cortexsuite/vision/cycles/sift/C_qcif.txt cortexsuite_arm/vision/cycles/sift/C_qcif.txt
+--- cortexsuite/vision/cycles/sift/C_qcif.txt	1970-01-01 09:00:00.000000000 +0900
++++ cortexsuite_arm/vision/cycles/sift/C_qcif.txt	2025-09-09 03:05:12.130140509 +0900
+@@ -0,0 +1 @@
++
+diff -ruN cortexsuite/vision/cycles/sift/C_sim_fast.txt cortexsuite_arm/vision/cycles/sift/C_sim_fast.txt
+--- cortexsuite/vision/cycles/sift/C_sim_fast.txt	1970-01-01 09:00:00.000000000 +0900
++++ cortexsuite_arm/vision/cycles/sift/C_sim_fast.txt	2025-09-09 03:05:12.130368884 +0900
+@@ -0,0 +1 @@
++
+diff -ruN cortexsuite/vision/cycles/sift/C_sim.txt cortexsuite_arm/vision/cycles/sift/C_sim.txt
+--- cortexsuite/vision/cycles/sift/C_sim.txt	1970-01-01 09:00:00.000000000 +0900
++++ cortexsuite_arm/vision/cycles/sift/C_sim.txt	2025-09-09 03:05:12.130594926 +0900
+@@ -0,0 +1 @@
++
+diff -ruN cortexsuite/vision/cycles/sift/C_sqcif.txt cortexsuite_arm/vision/cycles/sift/C_sqcif.txt
+--- cortexsuite/vision/cycles/sift/C_sqcif.txt	1970-01-01 09:00:00.000000000 +0900
++++ cortexsuite_arm/vision/cycles/sift/C_sqcif.txt	2025-09-09 03:05:12.130841093 +0900
+@@ -0,0 +1 @@
++
+diff -ruN cortexsuite/vision/cycles/sift/C_test.txt cortexsuite_arm/vision/cycles/sift/C_test.txt
+--- cortexsuite/vision/cycles/sift/C_test.txt	1970-01-01 09:00:00.000000000 +0900
++++ cortexsuite_arm/vision/cycles/sift/C_test.txt	2025-09-09 03:05:12.131084634 +0900
+@@ -0,0 +1 @@
++
+diff -ruN cortexsuite/vision/cycles/sift/C_vga.txt cortexsuite_arm/vision/cycles/sift/C_vga.txt
+--- cortexsuite/vision/cycles/sift/C_vga.txt	1970-01-01 09:00:00.000000000 +0900
++++ cortexsuite_arm/vision/cycles/sift/C_vga.txt	2025-09-09 03:05:12.131310676 +0900
+@@ -0,0 +1 @@
++
+diff -ruN cortexsuite/vision/cycles/stitch/C_cif.txt cortexsuite_arm/vision/cycles/stitch/C_cif.txt
+--- cortexsuite/vision/cycles/stitch/C_cif.txt	1970-01-01 09:00:00.000000000 +0900
++++ cortexsuite_arm/vision/cycles/stitch/C_cif.txt	2025-09-09 03:05:12.131672343 +0900
+@@ -0,0 +1 @@
++
+diff -ruN cortexsuite/vision/cycles/stitch/C_fullhd.txt cortexsuite_arm/vision/cycles/stitch/C_fullhd.txt
+--- cortexsuite/vision/cycles/stitch/C_fullhd.txt	1970-01-01 09:00:00.000000000 +0900
++++ cortexsuite_arm/vision/cycles/stitch/C_fullhd.txt	2025-09-09 03:05:12.131877384 +0900
+@@ -0,0 +1 @@
++
+diff -ruN cortexsuite/vision/cycles/stitch/C_qcif.txt cortexsuite_arm/vision/cycles/stitch/C_qcif.txt
+--- cortexsuite/vision/cycles/stitch/C_qcif.txt	1970-01-01 09:00:00.000000000 +0900
++++ cortexsuite_arm/vision/cycles/stitch/C_qcif.txt	2025-09-09 03:05:12.132105759 +0900
+@@ -0,0 +1 @@
++
+diff -ruN cortexsuite/vision/cycles/stitch/C_sim_fast.txt cortexsuite_arm/vision/cycles/stitch/C_sim_fast.txt
+--- cortexsuite/vision/cycles/stitch/C_sim_fast.txt	1970-01-01 09:00:00.000000000 +0900
++++ cortexsuite_arm/vision/cycles/stitch/C_sim_fast.txt	2025-09-09 03:05:12.132335009 +0900
+@@ -0,0 +1 @@
++
+diff -ruN cortexsuite/vision/cycles/stitch/C_sim.txt cortexsuite_arm/vision/cycles/stitch/C_sim.txt
+--- cortexsuite/vision/cycles/stitch/C_sim.txt	1970-01-01 09:00:00.000000000 +0900
++++ cortexsuite_arm/vision/cycles/stitch/C_sim.txt	2025-09-09 03:05:12.132560176 +0900
+@@ -0,0 +1 @@
++
+diff -ruN cortexsuite/vision/cycles/stitch/C_sqcif.txt cortexsuite_arm/vision/cycles/stitch/C_sqcif.txt
+--- cortexsuite/vision/cycles/stitch/C_sqcif.txt	1970-01-01 09:00:00.000000000 +0900
++++ cortexsuite_arm/vision/cycles/stitch/C_sqcif.txt	2025-09-09 03:05:12.132803426 +0900
+@@ -0,0 +1 @@
++
+diff -ruN cortexsuite/vision/cycles/stitch/C_test.txt cortexsuite_arm/vision/cycles/stitch/C_test.txt
+--- cortexsuite/vision/cycles/stitch/C_test.txt	1970-01-01 09:00:00.000000000 +0900
++++ cortexsuite_arm/vision/cycles/stitch/C_test.txt	2025-09-09 03:05:12.133049593 +0900
+@@ -0,0 +1 @@
++
+diff -ruN cortexsuite/vision/cycles/stitch/C_vga.txt cortexsuite_arm/vision/cycles/stitch/C_vga.txt
+--- cortexsuite/vision/cycles/stitch/C_vga.txt	1970-01-01 09:00:00.000000000 +0900
++++ cortexsuite_arm/vision/cycles/stitch/C_vga.txt	2025-09-09 03:05:12.133274759 +0900
+@@ -0,0 +1 @@
++
+diff -ruN cortexsuite/vision/cycles/svm/C_cif.txt cortexsuite_arm/vision/cycles/svm/C_cif.txt
+--- cortexsuite/vision/cycles/svm/C_cif.txt	1970-01-01 09:00:00.000000000 +0900
++++ cortexsuite_arm/vision/cycles/svm/C_cif.txt	2025-09-09 03:05:12.133635259 +0900
+@@ -0,0 +1 @@
++
+diff -ruN cortexsuite/vision/cycles/svm/C_qcif.txt cortexsuite_arm/vision/cycles/svm/C_qcif.txt
+--- cortexsuite/vision/cycles/svm/C_qcif.txt	1970-01-01 09:00:00.000000000 +0900
++++ cortexsuite_arm/vision/cycles/svm/C_qcif.txt	2025-09-09 03:05:12.133838259 +0900
+@@ -0,0 +1 @@
++
+diff -ruN cortexsuite/vision/cycles/svm/C_sim_fast.txt cortexsuite_arm/vision/cycles/svm/C_sim_fast.txt
+--- cortexsuite/vision/cycles/svm/C_sim_fast.txt	1970-01-01 09:00:00.000000000 +0900
++++ cortexsuite_arm/vision/cycles/svm/C_sim_fast.txt	2025-09-09 03:05:12.134064301 +0900
+@@ -0,0 +1 @@
++
+diff -ruN cortexsuite/vision/cycles/svm/C_sim.txt cortexsuite_arm/vision/cycles/svm/C_sim.txt
+--- cortexsuite/vision/cycles/svm/C_sim.txt	1970-01-01 09:00:00.000000000 +0900
++++ cortexsuite_arm/vision/cycles/svm/C_sim.txt	2025-09-09 03:05:12.134288009 +0900
+@@ -0,0 +1 @@
++
+diff -ruN cortexsuite/vision/cycles/svm/C_sqcif.txt cortexsuite_arm/vision/cycles/svm/C_sqcif.txt
+--- cortexsuite/vision/cycles/svm/C_sqcif.txt	1970-01-01 09:00:00.000000000 +0900
++++ cortexsuite_arm/vision/cycles/svm/C_sqcif.txt	2025-09-09 03:05:12.134513176 +0900
+@@ -0,0 +1 @@
++
+diff -ruN cortexsuite/vision/cycles/svm/C_test.txt cortexsuite_arm/vision/cycles/svm/C_test.txt
+--- cortexsuite/vision/cycles/svm/C_test.txt	1970-01-01 09:00:00.000000000 +0900
++++ cortexsuite_arm/vision/cycles/svm/C_test.txt	2025-09-09 03:05:12.134740093 +0900
+@@ -0,0 +1 @@
++
+diff -ruN cortexsuite/vision/cycles/texture_synthesis/C_cif.txt cortexsuite_arm/vision/cycles/texture_synthesis/C_cif.txt
+--- cortexsuite/vision/cycles/texture_synthesis/C_cif.txt	1970-01-01 09:00:00.000000000 +0900
++++ cortexsuite_arm/vision/cycles/texture_synthesis/C_cif.txt	2025-09-09 03:05:12.135139384 +0900
+@@ -0,0 +1 @@
++
+diff -ruN cortexsuite/vision/cycles/texture_synthesis/C_fullhd.txt cortexsuite_arm/vision/cycles/texture_synthesis/C_fullhd.txt
+--- cortexsuite/vision/cycles/texture_synthesis/C_fullhd.txt	1970-01-01 09:00:00.000000000 +0900
++++ cortexsuite_arm/vision/cycles/texture_synthesis/C_fullhd.txt	2025-09-09 03:05:12.135332759 +0900
+@@ -0,0 +1 @@
++
+diff -ruN cortexsuite/vision/cycles/texture_synthesis/C_qcif.txt cortexsuite_arm/vision/cycles/texture_synthesis/C_qcif.txt
+--- cortexsuite/vision/cycles/texture_synthesis/C_qcif.txt	1970-01-01 09:00:00.000000000 +0900
++++ cortexsuite_arm/vision/cycles/texture_synthesis/C_qcif.txt	2025-09-09 03:05:12.135560551 +0900
+@@ -0,0 +1 @@
++
+diff -ruN cortexsuite/vision/cycles/texture_synthesis/C_sim_fast.txt cortexsuite_arm/vision/cycles/texture_synthesis/C_sim_fast.txt
+--- cortexsuite/vision/cycles/texture_synthesis/C_sim_fast.txt	1970-01-01 09:00:00.000000000 +0900
++++ cortexsuite_arm/vision/cycles/texture_synthesis/C_sim_fast.txt	2025-09-09 03:05:12.135810801 +0900
+@@ -0,0 +1 @@
++
+diff -ruN cortexsuite/vision/cycles/texture_synthesis/C_sim.txt cortexsuite_arm/vision/cycles/texture_synthesis/C_sim.txt
+--- cortexsuite/vision/cycles/texture_synthesis/C_sim.txt	1970-01-01 09:00:00.000000000 +0900
++++ cortexsuite_arm/vision/cycles/texture_synthesis/C_sim.txt	2025-09-09 03:05:12.136040926 +0900
+@@ -0,0 +1 @@
++
+diff -ruN cortexsuite/vision/cycles/texture_synthesis/C_sqcif.txt cortexsuite_arm/vision/cycles/texture_synthesis/C_sqcif.txt
+--- cortexsuite/vision/cycles/texture_synthesis/C_sqcif.txt	1970-01-01 09:00:00.000000000 +0900
++++ cortexsuite_arm/vision/cycles/texture_synthesis/C_sqcif.txt	2025-09-09 03:05:12.136275718 +0900
+@@ -0,0 +1 @@
++
+diff -ruN cortexsuite/vision/cycles/texture_synthesis/C_test.txt cortexsuite_arm/vision/cycles/texture_synthesis/C_test.txt
+--- cortexsuite/vision/cycles/texture_synthesis/C_test.txt	1970-01-01 09:00:00.000000000 +0900
++++ cortexsuite_arm/vision/cycles/texture_synthesis/C_test.txt	2025-09-09 03:05:12.136505551 +0900
+@@ -0,0 +1 @@
++
+diff -ruN cortexsuite/vision/cycles/texture_synthesis/C_vga.txt cortexsuite_arm/vision/cycles/texture_synthesis/C_vga.txt
+--- cortexsuite/vision/cycles/texture_synthesis/C_vga.txt	1970-01-01 09:00:00.000000000 +0900
++++ cortexsuite_arm/vision/cycles/texture_synthesis/C_vga.txt	2025-09-09 03:05:12.136738884 +0900
+@@ -0,0 +1 @@
++
+diff -ruN cortexsuite/vision/cycles/tracking/C_cif.txt cortexsuite_arm/vision/cycles/tracking/C_cif.txt
+--- cortexsuite/vision/cycles/tracking/C_cif.txt	1970-01-01 09:00:00.000000000 +0900
++++ cortexsuite_arm/vision/cycles/tracking/C_cif.txt	2025-09-09 03:05:12.137118343 +0900
+@@ -0,0 +1 @@
++
+diff -ruN cortexsuite/vision/cycles/tracking/C_fullhd.txt cortexsuite_arm/vision/cycles/tracking/C_fullhd.txt
+--- cortexsuite/vision/cycles/tracking/C_fullhd.txt	1970-01-01 09:00:00.000000000 +0900
++++ cortexsuite_arm/vision/cycles/tracking/C_fullhd.txt	2025-09-09 03:05:12.137307051 +0900
+@@ -0,0 +1 @@
++
+diff -ruN cortexsuite/vision/cycles/tracking/C_qcif.txt cortexsuite_arm/vision/cycles/tracking/C_qcif.txt
+--- cortexsuite/vision/cycles/tracking/C_qcif.txt	1970-01-01 09:00:00.000000000 +0900
++++ cortexsuite_arm/vision/cycles/tracking/C_qcif.txt	2025-09-09 03:05:12.137534551 +0900
+@@ -0,0 +1 @@
++
+diff -ruN cortexsuite/vision/cycles/tracking/C_sim_fast.txt cortexsuite_arm/vision/cycles/tracking/C_sim_fast.txt
+--- cortexsuite/vision/cycles/tracking/C_sim_fast.txt	1970-01-01 09:00:00.000000000 +0900
++++ cortexsuite_arm/vision/cycles/tracking/C_sim_fast.txt	2025-09-09 03:05:12.137774593 +0900
+@@ -0,0 +1 @@
++
+diff -ruN cortexsuite/vision/cycles/tracking/C_sim.txt cortexsuite_arm/vision/cycles/tracking/C_sim.txt
+--- cortexsuite/vision/cycles/tracking/C_sim.txt	1970-01-01 09:00:00.000000000 +0900
++++ cortexsuite_arm/vision/cycles/tracking/C_sim.txt	2025-09-09 03:05:12.138002093 +0900
+@@ -0,0 +1 @@
++
+diff -ruN cortexsuite/vision/cycles/tracking/C_sqcif.txt cortexsuite_arm/vision/cycles/tracking/C_sqcif.txt
+--- cortexsuite/vision/cycles/tracking/C_sqcif.txt	1970-01-01 09:00:00.000000000 +0900
++++ cortexsuite_arm/vision/cycles/tracking/C_sqcif.txt	2025-09-09 03:05:12.138227259 +0900
+@@ -0,0 +1 @@
++
+diff -ruN cortexsuite/vision/cycles/tracking/C_test.txt cortexsuite_arm/vision/cycles/tracking/C_test.txt
+--- cortexsuite/vision/cycles/tracking/C_test.txt	1970-01-01 09:00:00.000000000 +0900
++++ cortexsuite_arm/vision/cycles/tracking/C_test.txt	2025-09-09 03:05:12.138453301 +0900
+@@ -0,0 +1 @@
++
+diff -ruN cortexsuite/vision/cycles/tracking/C_vga.txt cortexsuite_arm/vision/cycles/tracking/C_vga.txt
+--- cortexsuite/vision/cycles/tracking/C_vga.txt	1970-01-01 09:00:00.000000000 +0900
++++ cortexsuite_arm/vision/cycles/tracking/C_vga.txt	2025-09-09 03:05:12.138694218 +0900
+@@ -0,0 +1 @@
++
