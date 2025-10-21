@@ -7,10 +7,10 @@
     - 動作確認済みバージョン：Version 1.4CS
     - http://parallel.ucsd.edu/vision/
 
-## 仕様方法
+## 使用方法
 - SD-VBSをクローン
     - 上記ダウンロード先からフォームを入力するとリンクを入手できる
-- パッチファイルをSD-VBSと同じディレクトリに移動
+- パッチファイルをSD-VBSと同じ階層のディレクトリに置く
     ```sh
     $ ls
     cortexsuite           cortexsuite_arm.patch
