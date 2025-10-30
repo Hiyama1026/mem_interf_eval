@@ -31,6 +31,7 @@ int target_cpu = 3;
 bool buf_full_flag = false;
 bool start_flag = false;
 bool exp_all_flag = false;
+bool overall_flag = false;
 bool use_file_export = false;
 bool use_threadset = false;
 
@@ -45,6 +46,9 @@ int* int_target_cpus = NULL;
 char* cnt_names[MAX_EVENT_NUM];
 int counter_num = 0;
 
+void signal_handler(int signum);
+void timer_handler(int signum);
+
 void error_print(void) {
     printf("arg[1]: PMU events ID\n");
     printf("  > Enter in hexadecimal.\n");
@@ -57,50 +61,14 @@ void error_print(void) {
     printf("  > The maximum number of CPUs is defined by \"MAX_CPU_NUM\" macro.\n");
     printf("  > Using multiple CPUs is not recommended.\n");
     printf("arg[4 or more]: Reference below.\n");
-    printf("  > Use \"-r <EXPORT INTERVAL>\" to adjust the export interval.\n");
+    printf("  > Use \"-i <EXPORT INTERVAL>\" to adjust the export interval. (If negative, only the total shows.)\n");
     printf("  > Use \"-p <PID>\" to specify the target PID. (By default, all processes are included with PID=-1)\n");
     printf("  > Use \"-f <FILE NAME>\" when using file export.\n");
-    printf("  > Use \"-a\" to output the score for each CPU.\n");
+    printf("  > Use \"-e\" to output the score for each CPU.\n");
     printf("  > Use \"-t <CPU NUM>\" when pinning threads to a specific CPU.\n");
 }
 
-void signal_handler(int signum) {
-    int report_idx = 0;
 
-    //printf("signal_handler (%d)\n", signum);
-    if (use_file_export) {
-        log_fp = fopen(log_file_path, "w");
-        if (!log_fp) {
-            printf("ERR: Could not open the log file. (%s)\n", log_file_path);
-            exit(EXIT_FAILURE);
-        }
-        if (buf_full_flag) {
-            fprintf(log_fp, "WARN: BUFFER FULL.\n\n");
-        }
-
-        for (int i = 0; i < counter_num; i++) {
-            fprintf(log_fp, "%s", cnt_names[i]);
-            if (i != counter_num - 1) {
-                fprintf(log_fp, ",");
-            }
-        }
-        fprintf(log_fp, "\n");
-
-        while(report_idx < result_idx){
-            for (int i = 0; i < counter_num; i++) {
-                fprintf(log_fp, "%lu", buf_logs[i][report_idx]);
-                if (i != counter_num - 1) {
-                    fprintf(log_fp, ",");
-                }
-            }
-            fprintf(log_fp, "\n");
-            report_idx++;
-        }
-        fclose(log_fp);
-        exit(0);
-    }
-    exit(0);
-}
 
 static long perf_event_open(struct perf_event_attr *hw_event, pid_t pid, int cpu, int group_fd, unsigned long flags){
     long fd;
@@ -239,6 +207,63 @@ void timer_handler(int signum)
     reset_and_start_counter();
 }
 
+/*
+ * シグナルハンドラ
+ */
+void signal_handler(int signum) {
+    int report_idx = 0;
+
+    //printf("signal_handler (%d)\n", signum);
+
+    if (overall_flag) {
+        stop_counter();
+        printf("\n");
+        export_counter();
+    }
+    else {
+        printf("\n");
+    }
+
+    if (use_file_export) {
+        log_fp = fopen(log_file_path, "w");
+        if (!log_fp) {
+            printf("ERR: Could not open the log file. (%s)\n", log_file_path);
+            exit(EXIT_FAILURE);
+        }
+        else {
+            printf("Logfile created.\n");
+        }
+        if (buf_full_flag) {
+            fprintf(log_fp, "WARN: BUFFER FULL.\n\n");
+        }
+
+        if (overall_flag) {
+            fprintf(log_fp, "OverallResultsOnly\n\n");
+        }
+
+        for (int i = 0; i < counter_num; i++) {
+            fprintf(log_fp, "%s", cnt_names[i]);
+            if (i != counter_num - 1) {
+                fprintf(log_fp, ",");
+            }
+        }
+        fprintf(log_fp, "\n");
+
+        while(report_idx < result_idx){
+            for (int i = 0; i < counter_num; i++) {
+                fprintf(log_fp, "%lu", buf_logs[i][report_idx]);
+                if (i != counter_num - 1) {
+                    fprintf(log_fp, ",");
+                }
+            }
+            fprintf(log_fp, "\n");
+            report_idx++;
+        }
+        fclose(log_fp);
+    }
+    exit(0);
+}
+
 int create_directory(const char *path) {
     struct stat st = {0};
     int lg_mkdir;
@@ -375,7 +400,11 @@ int main(int argc, char** argv)
     ch_target_cpus = argv[3];
 
     if (argc >= mandatory_argc) {
-        for (int awc = mandatory_argc; awc < argc; awc+=2) {       
+        for (int awc = mandatory_argc; awc < argc; awc+=2) {
+            if (argv[awc][2] != '\0') {
+                error_print();
+                exit(EXIT_FAILURE);
+            }
             switch (argv[awc][1]) {
                 case 'p':
                     target_pid = strtoull(argv[awc+1], &endptr, 10);
@@ -386,10 +415,13 @@ int main(int argc, char** argv)
                     file_name = argv[awc+1];
                     sprintf(log_file_path, "%s/%s", "./cyc_pmu", file_name);
                     break;
-                case 'r':
+                case 'i':
                     interval = atof(argv[awc+1]);
+                    if (interval < 0) {
+                        overall_flag = true;
+                    }
                     break;
-                case 'a':
+                case 'e':
                     exp_all_flag = true;
                     awc-=1;
                     break;
@@ -397,6 +429,9 @@ int main(int argc, char** argv)
                     use_threadset = true;
                     cpu_to_self_set = atoi(argv[awc+1]);
                     break;
+                default:
+                    error_print();
+                    exit(EXIT_FAILURE);
             }
         }
     }
@@ -422,6 +457,10 @@ int main(int argc, char** argv)
 
     target_cpu_num = int_extract_comma(ch_target_cpus, MAX_CPU_NUM, int_target_cpus);
 
+    if (target_cpu == 1) {
+        exp_all_flag = false;
+    }
+
     if (target_cpu_num != 1 && use_file_export) {
         printf("ERR: File output is available only when measuring with single CPU.\n");
         exit(EXIT_FAILURE);
@@ -439,18 +478,20 @@ int main(int argc, char** argv)
     }
  
     // タイマ割り込みを発生させる
-    interval_sec = (int)interval / 1;
-    interval = interval - (double)interval_sec;
-    interval_nsec = (uint64_t)(interval * ns);
-    itval.it_value.tv_sec = interval_sec;     // 初回起動までの時間
-    itval.it_value.tv_nsec = interval_nsec;
-    itval.it_interval.tv_sec = interval_sec;  // 2回目以降の間隔
-    itval.it_interval.tv_nsec = interval_nsec;
+    if (!overall_flag) {
+        interval_sec = (int)interval / 1;
+        interval = interval - (double)interval_sec;
+        interval_nsec = (uint64_t)(interval * ns);
+        itval.it_value.tv_sec = interval_sec;     // 初回起動までの時間
+        itval.it_value.tv_nsec = interval_nsec;
+        itval.it_interval.tv_sec = interval_sec;  // 2回目以降の間隔
+        itval.it_interval.tv_nsec = interval_nsec;
 
-    // タイマの作成
-    if(timer_create(CLOCK_REALTIME, NULL, &tid) < 0) {
-        perror("timer_create");
-        return -1;
+        // タイマの作成
+        if(timer_create(CLOCK_REALTIME, NULL, &tid) < 0) {
+            perror("timer_create");
+            return -1;
+        }
     }
 
     // PMUカウンタグループの生成
@@ -472,11 +513,13 @@ int main(int argc, char** argv)
         // Check if a file with the same name exists. If not, create it.
         log_fp = fopen(log_file_path, "r");
         if (!log_fp) {
-            printf("Create log file\n");
             log_fp = fopen(log_file_path, "w");
             if (!log_fp) {
                 printf("Failed to create %s.\n", log_file_path);
                 exit(EXIT_FAILURE);
+            }
+            else {
+                printf("Logfile created.\n\n");
             }
         }
         else {
@@ -495,25 +538,37 @@ int main(int argc, char** argv)
     // Register signal handler (Ctrl+C, killall)
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
- 
-    //  タイマのセット
-    if(timer_settime(tid, 0, &itval, NULL) < 0) {
-        perror("timer_settime");
-        return -1;
-    }
- 
-    // シグナル(タイマ割り込み)が発生するまでサスペンドする
-    while(1) {
-        pause();
-    }
 
-    // タイマの解除
-    timer_delete(tid);
-
-    printf("stop and sleep\n");
+    if (overall_flag){
+        printf("Overall results only.\n");
+        fflush(stdout);
+        fflush(stderr);
+        reset_and_start_counter();
+        while(1) {
+            pause();
+        }
+    } else {
+        //  タイマのセット
+        fflush(stdout);
+        fflush(stderr);
+        if(timer_settime(tid, 0, &itval, NULL) < 0) {
+            perror("timer_settime");
+            return -1;
+        }
     
-    // シグナルハンドラの解除
-    sigaction(SIGALRM, &oldact, NULL);
+        // シグナル(タイマ割り込み)が発生するまでサスペンドする
+        while(1) {
+            pause();
+        }
+
+        // タイマの解除
+        timer_delete(tid);
+
+        printf("stop and sleep\n");
+        
+        // シグナルハンドラの解除
+        sigaction(SIGALRM, &oldact, NULL);
+    }
 
     return 0;
 }
