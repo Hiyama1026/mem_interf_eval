@@ -271,6 +271,7 @@ int create_directory(const char *path) {
     // Check if the directory already exists
     if (stat(path, &st) != 0) {
         printf("Create %s\n", path);
+        
         lg_mkdir = mkdir(path, 0755);
         if (lg_mkdir == -1) {
             printf("ERR: Failed to create %s\n", path);
@@ -413,7 +414,7 @@ int main(int argc, char** argv)
                 case 'f':
                     use_file_export = true;
                     file_name = argv[awc+1];
-                    sprintf(log_file_path, "%s/%s", "./cyc_pmu", file_name);
+                    sprintf(log_file_path, "%s", file_name);
                     break;
                 case 'i':
                     interval = atof(argv[awc+1]);
@@ -435,6 +436,9 @@ int main(int argc, char** argv)
             }
         }
     }
+
+    // mkdirの権限を自由に設定可能に
+    umask(0000);
 
     if (use_threadset) {
         CPU_ZERO(&cpu_set);
