@@ -12,22 +12,27 @@
 #include <stddef.h>
 #include <unistd.h>
 #include <sys/stat.h>
+#include <pthread.h>
 
-#define TYPE        int
+#define TYPE        char
 #define CHUNK_SIZE  32
+//#define DEBUG
+
+#ifdef DEBUG
+void db_wr(uint64_t iterations, void *cookie);
+#endif
 
 double	wr(uint64_t iterations, void *cookie);
 void	report_cnt(uint64_t iterations, void *cookie);
 void	init_loop(uint64_t iterations, void *cookie);
 void	cleanup(uint64_t iterations, void *cookie);
 
-char *ERR_INVALID_ARGS = "arg[1]: Max buffer size\n  > Use 5GB if it is 0.\narg[2]: Stride\n  > Use 2048KB if it is 0.\narg[3 or more]: Reference below.\n  > Use \"-r <REPORT INTERVAL>\" when using report-function.\n  > Use \"-t <CPU NUM>\" when using cgroup-taskset(cpuset).\n  > Use \"-f <FILE NAME>\" when using file export.\n  > Use \"-e <NUM OF ELEMENTS>\" to set the number of logs can be saved.\n";
-
-bool use_taskset = false;
+bool use_cg_taskset = false;
 bool use_report = false;
 bool use_file_export = false;
 bool use_buffsize_set = false;
 bool buf_full_flag = false;
+bool use_threadset = false;
 
 uint64_t start_t, end_t = 0;
 double  *buf_log;
@@ -51,7 +56,7 @@ typedef struct _state {
 	TYPE	*buf;
 	TYPE	*buf2;
 	TYPE	*buf2_orig;
-	TYPE	*lastchunk;
+	TYPE	*remainder_boundary;
 	TYPE	*lastone;
 	size_t stride_b;		// stride
 	size_t	N;
@@ -63,6 +68,20 @@ uint64_t get_time_ns() {
     struct timespec t;
     clock_gettime(CLOCK_MONOTONIC, &t);
     return 1000000000ULL * t.tv_sec + t.tv_nsec;
+}
+
+void error_print(void) {
+    printf("arg[1]: Max buffer size\n");
+    printf("  > Use 5GB if it is 0.\n");
+    printf("arg[2]: Stride\n");
+    printf("  > Use 2048KB if it is 0.\n");
+    printf("arg[3 or more]: Reference below.\n");
+    printf("  > Use \"-r <REPORT INTERVAL>\" when using report-function.\n");
+    printf("  > Use \"-g <CPU NUM>\" when using cgroup-taskset(cpuset).\n");
+    printf("  > Use \"-f <FILE NAME>\" when using file export.\n");
+    printf("  > Use \"-e <NUM OF ELEMENTS>\" to set the number of logs can be saved.\n");
+    printf("  > Use \"-t <CPU NUM>\" when pinning threads to a specific CPU.\n");
+
 }
 
 char
@@ -146,6 +165,76 @@ int create_directory(const char *path) {
     return 0;
 }
 
+void cg_taskset(pid_t pid, char* cpu_to_set){
+    int cpuset_value = 0;
+    int pid_check_cnt = 0;
+    FILE *cg_fp;
+
+    // Enable cpuset module at master
+    cg_fp = fopen("/sys/fs/cgroup/cgroup.subtree_control", "w");
+    if (!cg_fp) {
+        printf("ERR: Could not open the croup-v2 cpuset file. (%s)\n", "/sys/fs/cgroup/cgroup.subtree_control");
+        printf("> You may need sudo.\n");
+        exit(1);
+    }
+    fprintf(cg_fp, "%s", "+cpuset");
+    fclose(cg_fp);
+
+    // Create parent group
+    create_directory("/sys/fs/cgroup/sim_lmb");
+
+    // Enable cpuset module at parent group
+    cg_fp = fopen("/sys/fs/cgroup/sim_lmb/cgroup.subtree_control", "w");
+    if (!cg_fp) {
+        printf("ERR: Could not open the croup-v2 cpuset file. (%s)\n", "/sys/fs/cgroup/cgroup.subtree_control");
+        exit(1);
+    }
+    fprintf(cg_fp, "%s", "+cpuset");
+    fclose(cg_fp);
+
+    // Create sub group
+    create_directory("/sys/fs/cgroup/sim_lmb/sim-lat_mem_rd");
+
+    // Set CPU num 1 to cgroup config
+    cg_fp = fopen("/sys/fs/cgroup/sim_lmb/sim-lat_mem_rd/cpuset.cpus", "w");
+    if (!cg_fp) {
+        printf("ERR: Could not open the croup-v2 cpuset file. (%s)\n", "/sys/fs/cgroup/sim_lmb/sim-lat_mem_rd/cpuset.cpus");
+        exit(1);
+    }
+    fprintf(cg_fp, "%s", cpu_to_set);
+    fclose(cg_fp);
+
+    // Write PID to the  cpuset file
+    cg_fp = fopen("/sys/fs/cgroup/sim_lmb/sim-lat_mem_rd/cgroup.procs", "w");
+    if (!cg_fp) {
+        printf("ERR: Could not open the croup-v2 cpuset file. (\"sim-lat_mem_rd\" group)\n");
+        exit(1);
+    }
+    fprintf(cg_fp, "%d\n", pid);
+    fclose(cg_fp);
+
+    // Read an integer from the file
+    do {
+        cg_fp = fopen("/sys/fs/cgroup/sim_lmb/sim-lat_mem_rd/cgroup.procs", "r");
+        if (!cg_fp) {
+            printf("ERR: Could not open the croup-v2 cpuset file. (\"sim-lat_mem_rd\" group)\n");
+            exit(1);
+        }
+
+        int fscan_res = fscanf(cg_fp, "%d", &cpuset_value);
+        (void)fscan_res;
+        fclose(cg_fp);
+        usleep(100*1000);   // sleep 0.1s
+        
+        // 2s check
+        if (pid_check_cnt == 20) {
+            printf("ERR: Could not set PID to the cpuset setting. (\"sim-lat_mem_rd\" group)\n");
+            exit(1);
+        }
+        pid_check_cnt++;
+    } while (cpuset_value != pid);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -153,63 +242,66 @@ main(int argc, char **argv)
 	double res;
 	size_t	nbytes;
 	state_t	state;
-	
+	int mandatory_argc = 3;
 	char *endptr;
-	FILE *cg_fp;
     char *file_name;
-	char* cpu_to_set = NULL;
-	int cpuset_value = 0;
-    int pid_check_cnt = 0;
+	char* ch_cpu_to_set = NULL;
     pid_t pid = getpid();
+    int cpu_to_self_set = 0;
+    int ts_result = 0;
+    cpu_set_t cpu_set;
 
 	//printf("int: %lu\n", sizeof(TYPE));
 
-	if (argc < 3) {
-		printf("%s", ERR_INVALID_ARGS);
+	if (argc < mandatory_argc) {
+		error_print();
         return 1;
     }
 
-	argc -= 3;
-    if ((argc % 2) != 0) {
-        printf("ERR: Argument num error.\n\n");
-        printf("%s", ERR_INVALID_ARGS);
-        return 1;
-    }
-    for (int awc = 0; awc < (argc/2); awc++) {        
-        switch (argv[(awc*2)+3][1]) {
+    //for (int awc = 0; awc < (argc/2); awc++) {        
+    for (int awc = mandatory_argc; awc < argc; awc+=2) {      
+        if (argv[awc][2] != '\0') {
+                error_print();
+                exit(EXIT_FAILURE);
+            }  
+        switch (argv[awc][1]) {
             case 'r':
                 use_report = true;
-                iterations = strtoull(argv[((awc*2)+3)+1], &endptr, 10);
+                iterations = strtoull(argv[awc+1], &endptr, 10);
                 break;
             case 't':
-                use_taskset = true;
-                cpu_to_set = argv[((awc*2)+3)+1];
+                    use_threadset = true;
+                    cpu_to_self_set = atoi(argv[awc+1]);
+                    break;
+            case 'g':
+                use_cg_taskset = true;
+                ch_cpu_to_set = argv[awc+1];
                 break;
             case 'f':
                 use_file_export = true;
-                file_name = argv[((awc*2)+3)+1];
-                sprintf(log_file_path, "%s%s", "./inf-results/", file_name);
+                file_name = argv[awc+1];
+                sprintf(log_file_path, "%s", file_name);
                 break;
             case 'e':
-                    buf_log_size = strtoull(argv[((awc*2)+3)+1], &endptr, 10);
+                    buf_log_size = strtoull(argv[awc+1], &endptr, 10);
                     use_buffsize_set = true;
                 break;
             default:
                 printf("ERR: Unknown argument. (%s)\n\n", argv[(awc*2)+3]);
-                printf("%s", ERR_INVALID_ARGS);
+                error_print();
                 return 1;
         }
     }
 
     if (!use_report && use_file_export) {
         printf("ERR: You must specify the report interval using -r option when using -f option.\n\n");
-        printf("%s", ERR_INVALID_ARGS);
+        error_print();
         exit(1);
     }
 
     if (!use_file_export && use_buffsize_set) {
         printf("ERR: Use -f with -f.\n\n");
-        printf("%s", ERR_INVALID_ARGS);
+        error_print();
         exit(1);
     }
 
@@ -243,77 +335,23 @@ main(int argc, char **argv)
         }
     }
 
+    if (use_threadset) {
+        CPU_ZERO(&cpu_set);
+        CPU_SET(cpu_to_self_set, &cpu_set);
+        ts_result = sched_setaffinity(pid, sizeof(cpu_set_t), &cpu_set);
+        if (ts_result != 0) {
+            printf("WARN: Failed to set cpu affinity.\n");
+        }
+    }
+
 	// cgroup taskset (cpuset)
-    if (use_taskset) {
-        // Enable cpuset module at master
-        cg_fp = fopen("/sys/fs/cgroup/cgroup.subtree_control", "w");
-        if (!cg_fp) {
-            printf("ERR: Could not open the croup_cpuset file. (%s)\n", "/sys/fs/cgroup/cgroup.subtree_control");
-            return 1;
-        }
-        fprintf(cg_fp, "%s", "+cpuset");
-        fclose(cg_fp);
-
-        // Create parent group
-        create_directory("/sys/fs/cgroup/Example");
-
-        // Enable cpuset module at parent group
-        cg_fp = fopen("/sys/fs/cgroup/Example/cgroup.subtree_control", "w");
-        if (!cg_fp) {
-            printf("ERR: Could not open the croup_cpuset file. (%s)\n", "/sys/fs/cgroup/cgroup.subtree_control");
-            return 1;
-        }
-        fprintf(cg_fp, "%s", "+cpuset");
-        fclose(cg_fp);
-
-        // Create sub group
-        create_directory("/sys/fs/cgroup/Example/inf-sim_bw_mem_wr");
-
-        // Set CPU num 1 to cgroup config
-        cg_fp = fopen("/sys/fs/cgroup/Example/inf-sim_bw_mem_wr/cpuset.cpus", "w");
-        if (!cg_fp) {
-            printf("ERR: Could not open the croup_cpuset file. (%s)\n", "/sys/fs/cgroup/Example/inf-sim_bw_mem_wr/cpuset.cpus");
-            return 1;
-        }
-        fprintf(cg_fp, "%s", cpu_to_set);
-        fclose(cg_fp);
-
-        // Write PID to the  cpuset file
-        cg_fp = fopen("/sys/fs/cgroup/Example/inf-sim_bw_mem_wr/cgroup.procs", "w");
-        if (!cg_fp) {
-            printf("ERR: Could not open the croup_cpuset file. (\"inf-sim_bw_mem_wr\" group)\n");
-            return 1;
-        }
-        fprintf(cg_fp, "%d\n", pid);
-        fclose(cg_fp);
-
-        // Read an integer from the file
-        do {
-            cg_fp = fopen("/sys/fs/cgroup/Example/inf-sim_bw_mem_wr/cgroup.procs", "r");
-            if (!cg_fp) {
-                printf("ERR: Could not open the croup_cpuset file. (\"inf-sim_bw_mem_wr\" group)\n");
-                fclose(cg_fp);
-                return 1;
-            }
-
-            int fscan_res = fscanf(cg_fp, "%d", &cpuset_value);
-            (void)fscan_res;
-            fclose(cg_fp);
-            //printf("PID: %d, FILE: %d!!\n", pid, cpuset_value);
-            usleep(100*1000);   // sleep 0.1s
-            
-            // 2s check
-            if (pid_check_cnt == 20) {
-                printf("ERR: Could not set PID to the cpuset setting. (\"inf-sim_bw_mem_wr\" group)\n");
-                return 1;
-            }
-            pid_check_cnt++;
-        } while (cpuset_value != pid);
+    if (use_cg_taskset) {
+        cg_taskset(pid, ch_cpu_to_set);
     }
 
     // File export
     if (use_file_export) {
-        create_directory("./inf-results/");
+        create_directory("./wr-infresults/");
         // 同名のファイルが存在する確認．存在しなければ生成
         log_fp = fopen(log_file_path, "r");
         if (!log_fp) {
@@ -380,8 +418,13 @@ main(int argc, char **argv)
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
 
-    printf("Write start.\n\n");
+    printf("Write start.\n");
     fflush(stdout);
+
+    #ifdef DEBUG
+    db_wr(iterations, &state);
+    #endif
+
 	while(1) {
 		res = wr(iterations, &state);
         if (use_report && !use_file_export) {
@@ -407,15 +450,20 @@ void
 init_loop(uint64_t iterations, void *cookie)
 {
 	state_t *state = (state_t *) cookie;
+    uint access_num = 0;
     TYPE* buff_end;
 
 	if (iterations) return;
 
     state->buf = (TYPE *)valloc(state->nbytes);
 	state->buf2_orig = NULL;
-    buff_end = (TYPE*)((char *)state->buf + state->nbytes - 1);
-    state->lastchunk = (TYPE*)(buff_end - (state->stride_b * CHUNK_SIZE) + 1);
-    state->lastone = (TYPE*)(buff_end - state->stride_b + 1);
+	buff_end = (TYPE*)((char *)state->buf + state->nbytes - 1);
+    state->remainder_boundary = (TYPE*)(buff_end - (state->stride_b * CHUNK_SIZE) + 1);
+    access_num = state->nbytes / state->stride_b;
+    if ((state->nbytes % state->stride_b) != 0) {
+        access_num++;
+    }
+    state->lastone = (TYPE*)(state->buf + (state->stride_b * (access_num - 1)));
 	state->N = state->nbytes;
 
 	if (!state->buf) {
@@ -440,6 +488,7 @@ init_loop(uint64_t iterations, void *cookie)
 			state->buf2 = (TYPE *)tmp;
 		}
 	}
+    //printf("start: %p, lastone: %p\n", state->buf, state->lastone);
 }
 
 void
@@ -457,7 +506,7 @@ double
 wr(uint64_t iterations, void *cookie)
 {	
 	state_t *state = (state_t *) cookie;
-	register TYPE *lastchunk = state->lastchunk;
+	register TYPE *rem_boundary = state->remainder_boundary;
 	register TYPE *lastone = state->lastone;
 	register size_t stride = (size_t)(state->stride_b / sizeof(TYPE));
 	register int head = 0;
@@ -474,11 +523,11 @@ wr(uint64_t iterations, void *cookie)
     // チャンクアクセスからはみ出る量を計算
     rest_cnt = stride_cnt % CHUNK_SIZE;
     
-    #define	ONE(i)	p[i] = 0x7FFFFFFF;
+    #define	ONE(i)	p[i] = 1;
     start_t = get_time_ns();
     while (outer_cnt-- > 0) {
         p = state->buf;
-	    while (p <= lastchunk) {
+	    while (p <= rem_boundary) {
             ONE(head) 
             ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) 
             ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) 
@@ -545,3 +594,84 @@ void adjusted_bandwidth(uint64_t time, uint64_t bytes, uint64_t iter, double ove
 
 	return;
 }
+
+#ifdef DEBUG
+void
+db_wr(uint64_t iterations, void *cookie)
+{	
+	state_t *state = (state_t *) cookie;
+	register TYPE *rem_boundary = state->remainder_boundary;
+	register TYPE *lastone = state->lastone;
+	register size_t stride = (size_t)(state->stride_b / sizeof(TYPE));
+	register int head = 0;
+    uint64_t outer_cnt = iterations;
+    register TYPE *p;
+    TYPE *start_p, *end_p;
+    TYPE* accessed_tail = NULL;
+    int t = 0;
+
+    
+    #define	ONE(i)	p[i] = 1;
+    while (outer_cnt-- > 0) {
+        p = state->buf;
+        start_p = p;
+	    while (p <= rem_boundary) {
+            ONE(head)   // 1
+            ONE(head+=stride)   // 2
+            ONE(head+=stride)   // 3
+            ONE(head+=stride)   // 4
+            ONE(head+=stride)   // 5
+            ONE(head+=stride)   // 6
+            ONE(head+=stride)   // 7
+            ONE(head+=stride)   // 8
+            ONE(head+=stride)   // 9
+            ONE(head+=stride)   // 10
+            ONE(head+=stride)   // 11
+            ONE(head+=stride)   // 12
+            ONE(head+=stride)   // 13
+            ONE(head+=stride)   // 14
+            ONE(head+=stride)   // 15
+            ONE(head+=stride)   // 16
+            ONE(head+=stride)   // 17
+            ONE(head+=stride)   // 18
+            ONE(head+=stride)   // 19
+            ONE(head+=stride)   // 20
+            ONE(head+=stride)   // 21
+            ONE(head+=stride)   // 22
+            ONE(head+=stride)   // 23
+            ONE(head+=stride)   // 24
+            ONE(head+=stride)   // 25
+            ONE(head+=stride)   // 26
+            ONE(head+=stride)   // 27
+            ONE(head+=stride)   // 28
+            ONE(head+=stride)   // 29
+            ONE(head+=stride)   // 30
+            ONE(head+=stride)   // 31
+            ONE(head+=stride);  // 32 (chunk_size)
+
+            accessed_tail = p+(stride*31);  // 31回strideを足した為
+            printf("CHUNK-LAST: %p\n", accessed_tail);
+
+			p += (stride * CHUNK_SIZE);
+			head = 0;
+	    }
+        head = 0;
+        
+		while (p <= lastone) {
+            ONE(head)
+
+            printf("REMAIN-p: %p (%d)\n", p, t);
+            accessed_tail = p;
+            t++;
+
+            p+=stride;
+        }
+        end_p = accessed_tail;
+        
+        ptrdiff_t diff = (char*)end_p - (char*)start_p;
+        printf("\n");
+        printf("start: %p, end: %p, diff: %ld (%dKB, rem: %d)\n", start_p, end_p, diff, (int)diff/1024, (int)diff%1024);
+        exit(0);
+	}
+}
+#endif
