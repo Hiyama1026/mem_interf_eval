@@ -300,7 +300,7 @@ main(int argc, char **argv)
     }
 
     if (!use_file_export && use_buffsize_set) {
-        printf("ERR: Use -f with -f.\n\n");
+        printf("ERR: Use -e with -f.\n\n");
         error_print();
         exit(1);
     }
@@ -450,7 +450,7 @@ void
 init_loop(uint64_t iterations, void *cookie)
 {
 	state_t *state = (state_t *) cookie;
-    uint access_num = 0;
+    //uint access_num = 0;
     TYPE* buff_end;
 
 	if (iterations) return;
@@ -459,11 +459,7 @@ init_loop(uint64_t iterations, void *cookie)
 	state->buf2_orig = NULL;
 	buff_end = (TYPE*)((char *)state->buf + state->nbytes - 1);
     state->remainder_boundary = (TYPE*)(buff_end - (state->stride_b * CHUNK_SIZE) + 1);
-    access_num = state->nbytes / state->stride_b;
-    if ((state->nbytes % state->stride_b) != 0) {
-        access_num++;
-    }
-    state->lastone = (TYPE*)(state->buf + (state->stride_b * (access_num - 1)));
+    state->lastone = (TYPE*)(buff_end - state->stride_b + 1);
 	state->N = state->nbytes;
 
 	if (!state->buf) {
@@ -524,43 +520,68 @@ wr(uint64_t iterations, void *cookie)
     rest_cnt = stride_cnt % CHUNK_SIZE;
     
     #define	ONE(i)	p[i] = 1;
-    start_t = get_time_ns();
-    while (outer_cnt-- > 0) {
-        p = state->buf;
-	    while (p <= rem_boundary) {
-            ONE(head) 
-            ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) 
-            ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) 
-            ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) 
-            ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) 
-            ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) 
-            ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) 
-            ONE(head+=stride);
-			p += (stride * CHUNK_SIZE);
-			head = 0;
-            // chunk_count はここの回数
-	    }
-        head = 0;
-		while (p <= lastone) {
-            ONE(head)
-            p+=stride;
-            // rest_cnt はここの回数
+
+    if (!use_report) {
+        while (1) {
+            p = state->buf;
+            while (p <= rem_boundary) {
+                ONE(head) 
+                ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) 
+                ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) 
+                ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) 
+                ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) 
+                ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) 
+                ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) 
+                ONE(head+=stride);
+                p += (stride * CHUNK_SIZE);
+                head = 0;
+            }
+            head = 0;
+            while (p <= lastone) {
+                ONE(head)
+                p+=stride;
+            }
         }
-	}
-    end_t = get_time_ns();
-
-    if (use_report || use_file_export) {
-        res = (double)(end_t - start_t);
-        res /= (double)((chunk_count * CHUNK_SIZE) + rest_cnt);
-        res /= (double)iterations;
     }
+    else{
+        start_t = get_time_ns();
+        while (outer_cnt-- > 0) {
+            p = state->buf;
+            while (p <= rem_boundary) {
+                ONE(head) 
+                ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) 
+                ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) 
+                ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) 
+                ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) 
+                ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) 
+                ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) 
+                ONE(head+=stride);
+                p += (stride * CHUNK_SIZE);
+                head = 0;
+                // chunk_count はここの回数
+            }
+            head = 0;
+            while (p <= lastone) {
+                ONE(head)
+                p+=stride;
+                // rest_cnt はここの回数
+            }
+        }
+        end_t = get_time_ns();
 
-    if (use_file_export) {
-        buf_log[result_idx] = res;
-        result_idx++;
-        if (result_idx >= buf_log_size) {
-            buf_full_flag = true;
-            signal_handler(15);
+        if (use_report || use_file_export) {
+            res = (double)(end_t - start_t);
+            res /= (double)((chunk_count * CHUNK_SIZE) + rest_cnt);
+            res /= (double)iterations;
+        }
+
+        if (use_file_export) {
+            buf_log[result_idx] = res;
+            result_idx++;
+            if (result_idx >= buf_log_size) {
+                buf_full_flag = true;
+                signal_handler(15);
+            }
         }
     }
 
@@ -616,38 +637,14 @@ db_wr(uint64_t iterations, void *cookie)
         p = state->buf;
         start_p = p;
 	    while (p <= rem_boundary) {
-            ONE(head)   // 1
-            ONE(head+=stride)   // 2
-            ONE(head+=stride)   // 3
-            ONE(head+=stride)   // 4
-            ONE(head+=stride)   // 5
-            ONE(head+=stride)   // 6
-            ONE(head+=stride)   // 7
-            ONE(head+=stride)   // 8
-            ONE(head+=stride)   // 9
-            ONE(head+=stride)   // 10
-            ONE(head+=stride)   // 11
-            ONE(head+=stride)   // 12
-            ONE(head+=stride)   // 13
-            ONE(head+=stride)   // 14
-            ONE(head+=stride)   // 15
-            ONE(head+=stride)   // 16
-            ONE(head+=stride)   // 17
-            ONE(head+=stride)   // 18
-            ONE(head+=stride)   // 19
-            ONE(head+=stride)   // 20
-            ONE(head+=stride)   // 21
-            ONE(head+=stride)   // 22
-            ONE(head+=stride)   // 23
-            ONE(head+=stride)   // 24
-            ONE(head+=stride)   // 25
-            ONE(head+=stride)   // 26
-            ONE(head+=stride)   // 27
-            ONE(head+=stride)   // 28
-            ONE(head+=stride)   // 29
-            ONE(head+=stride)   // 30
-            ONE(head+=stride)   // 31
-            ONE(head+=stride);  // 32 (chunk_size)
+            ONE(head) 
+            ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) 
+            ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) 
+            ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) 
+            ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) 
+            ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) 
+            ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) ONE(head+=stride) 
+            ONE(head+=stride);
 
             accessed_tail = p+(stride*31);  // 31回strideを足した為
             printf("CHUNK-LAST: %p\n", accessed_tail);
