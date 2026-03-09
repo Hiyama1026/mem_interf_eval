@@ -23,7 +23,21 @@
 
 ## 動作確認状況
 
-![sd-vbs_conf](https://private-user-images.githubusercontent.com/119314361/496165092-627f3120-3654-40ba-a5ed-d44139e70577.png?jwt=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJnaXRodWIuY29tIiwiYXVkIjoicmF3LmdpdGh1YnVzZXJjb250ZW50LmNvbSIsImtleSI6ImtleTUiLCJleHAiOjE3NzMwMzU0ODAsIm5iZiI6MTc3MzAzNTE4MCwicGF0aCI6Ii8xMTkzMTQzNjEvNDk2MTY1MDkyLTYyN2YzMTIwLTM2NTQtNDBiYS1hNWVkLWQ0NDEzOWU3MDU3Ny5wbmc_WC1BbXotQWxnb3JpdGhtPUFXUzQtSE1BQy1TSEEyNTYmWC1BbXotQ3JlZGVudGlhbD1BS0lBVkNPRFlMU0E1M1BRSzRaQSUyRjIwMjYwMzA5JTJGdXMtZWFzdC0xJTJGczMlMkZhd3M0X3JlcXVlc3QmWC1BbXotRGF0ZT0yMDI2MDMwOVQwNTQ2MjBaJlgtQW16LUV4cGlyZXM9MzAwJlgtQW16LVNpZ25hdHVyZT1kZDRlYTZjNzY3YWIyODk3NTU2YjQ0OTBlYjJjMjk2NzYxMmQ5MWVjYjBlZThhNzljNjM3NTZlZjJhZGFlZTJhJlgtQW16LVNpZ25lZEhlYWRlcnM9aG9zdCJ9.dPUjpP_j23cjQ5UfH8LsRM59rfxlH2P5JcAb0R0zz4k)
+### SD-VBS (vision)
+| --- | **disparity** | **localization** | **mser** | **multi_ncut** | **pca** | **sift** | **stitch** | **svm** | **texture_synthesis** | **tracking** |
+|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| **cif**      | ○ | ○ | ○ | ○ | ×(err) | ○ | ×(err) | ○ | ○ | ○ |
+| **fullhd**   | ○ | ×(存在しない) | ○ | ○ | ×(err) | ○ | ×(err) | ×(存在しない) | ○ | ○ |
+| **qcif**     | ○ | ○ | ○ | ○ | ×(err) | ○ | ×(err) | ○ | ○ | ○ |
+| **sim**      | ○ | ○ | ○ | ○ | ×(err) | ○ | ×(err) | ○ | ○ | ○ |
+| **sim_fast** | ○ | ○ | ○ | ○ | ×(err) | ○ | ×(err) | ○ | ○ | ○ |
+| **sqcif**    | ○ | ○ | ○ | ○ | ×(err) | ○ | ×(err) | ○ | ○ | ○ |
+| **vga**      | ○ | ○ | ○ | ○ | ×(err) | ○ | ×(err) | ×(存在しない) | ○ | ○ |
+
+### CortexSuite
+| ベンチマーク | clustering | lda | liblinear | motion-estimation | srr | svd3 | word2vec | pca | rbm | sphinx | cnn |
+|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| 状況 | ○ | ○ | ○ | ○ | ○ | ○ | ○ | △ | × | × | × |
 
 ## ベンチマーク実行方法
 - SD-VBS (vision)
